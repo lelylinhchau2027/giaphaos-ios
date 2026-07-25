@@ -1,0 +1,44 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://giapha-os.homielab.com"
+      }
+    },
+    "esign": {
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium",
+        "credentialsSource": "remote"
+      },
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://giapha-os.homielab.com"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_WEB_URL": "https://giapha-os.homielab.com"
+      },
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

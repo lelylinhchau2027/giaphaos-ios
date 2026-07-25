@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Expo / native generated (CI tạo lại bằng prebuild)
+.expo/
+dist/
+web-build/
+ios/
+android/
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# Native credentials / signing
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.ipa
+!docs/**/*.ipa
+
+# Logs & OS
+npm-debug.*
+yarn-error.log*
+*.log
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.claude/
+AGENTS.md
+CLAUDE.md
