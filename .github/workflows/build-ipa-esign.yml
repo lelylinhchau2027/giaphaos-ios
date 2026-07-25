@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       web_url:
-        description: "URL web app (Vercel)"
+        description: "URL web Gia Phả CỦA BẠN (Safari mở trang nào thì dán đúng URL đó)"
         required: true
         default: "https://giapha-os.homielab.com"
       supabase_url:

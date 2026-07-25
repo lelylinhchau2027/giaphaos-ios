@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -8,27 +8,45 @@ import {
   View,
 } from "react-native";
 import { WebView, type WebViewNavigation } from "react-native-webview";
-import { WEB_URL } from "../config";
 
 type Props = {
+  /** URL gốc (không slash cuối), ví dụ https://giapha-cua-ban.vercel.app */
+  baseUrl: string;
   path?: string | null;
   onReady?: () => void;
+  /** Mở màn cấu hình URL */
+  onOpenSettings?: () => void;
 };
 
 /**
- * WebView full-screen load bản web — UI/UX giống 100% bản Vercel.
- * Tối ưu cảm giác native: tắt bounce xung đột pan-zoom cây, safe area, spinner.
+ * WebView full-screen load bản web — UI/UX giống 100% bản deploy.
  */
-export default function WebApp({ path, onReady }: Props) {
+export default function WebApp({
+  baseUrl,
+  path,
+  onReady,
+  onOpenSettings,
+}: Props) {
   const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [canGoBack, setCanGoBack] = useState(false);
+  /** Tăng để force remount WebView khi đổi URL */
+  const [reloadKey, setReloadKey] = useState(0);
 
+  const root = baseUrl.replace(/\/$/, "");
   const uri = path
-    ? `${WEB_URL.replace(/\/$/, "")}${path.startsWith("/") ? path : `/${path}`}`
-    : WEB_URL;
+    ? `${root}${path.startsWith("/") ? path : `/${path}`}`
+    : root;
+
+  useEffect(() => {
+    // baseUrl đổi → reload sạch
+    setLoading(true);
+    setError(null);
+    setProgress(0);
+    setReloadKey((k) => k + 1);
+  }, [baseUrl]);
 
   const onNav = useCallback((nav: WebViewNavigation) => {
     setCanGoBack(nav.canGoBack);
@@ -45,11 +63,16 @@ export default function WebApp({ path, onReady }: Props) {
           onPress={() => {
             setError(null);
             setLoading(true);
-            webRef.current?.reload();
+            setReloadKey((k) => k + 1);
           }}
         >
           <Text style={styles.retryText}>Thử lại</Text>
         </Pressable>
+        {onOpenSettings ? (
+          <Pressable style={styles.settingsLink} onPress={onOpenSettings}>
+            <Text style={styles.settingsLinkText}>Đổi URL web…</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -60,6 +83,9 @@ export default function WebApp({ path, onReady }: Props) {
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color="#B45309" />
           <Text style={styles.loadingText}>Đang mở Gia Phả…</Text>
+          <Text style={styles.loadingUrl} numberOfLines={2}>
+            {uri}
+          </Text>
           <View style={styles.progressTrack}>
             <View
               style={[
@@ -72,10 +98,10 @@ export default function WebApp({ path, onReady }: Props) {
       )}
 
       <WebView
+        key={`${reloadKey}:${uri}`}
         ref={webRef}
         source={{ uri }}
         style={styles.webview}
-        // —— mượt / native feel ——
         allowsBackForwardNavigationGestures
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
@@ -84,16 +110,12 @@ export default function WebApp({ path, onReady }: Props) {
         javaScriptEnabled
         domStorageEnabled
         cacheEnabled
-        // Tắt bounce để không “giật” khi pan/zoom cây gia phả
         bounces={false}
         overScrollMode="never"
-        // iOS: giảm delay click 300ms
         decelerationRate="normal"
         contentInsetAdjustmentBehavior="automatic"
         automaticallyAdjustContentInsets={false}
-        // Pull-to-refresh (iOS)
         pullToRefreshEnabled={Platform.OS === "ios"}
-        // User agent nhẹ để server nhận diện app (tuỳ chọn)
         applicationNameForUserAgent="GiaPhaOS-iOS"
         onLoadProgress={({ nativeEvent }) => {
           setProgress(nativeEvent.progress);
@@ -116,9 +138,7 @@ export default function WebApp({ path, onReady }: Props) {
           }
         }}
         onNavigationStateChange={onNav}
-        // Chặn mở link ngoài browser hệ thống (giữ trong app)
         setSupportMultipleWindows={false}
-        // Inject CSS nhỏ: chặn overscroll rubber-band trên body
         injectedJavaScriptBeforeContentLoaded={`
           (function() {
             try {
@@ -131,7 +151,6 @@ export default function WebApp({ path, onReady }: Props) {
         `}
       />
 
-      {/* Nút back native khi WebView có history (tuỳ chọn, ẩn khi root) */}
       {canGoBack && !loading && (
         <Pressable
           style={styles.backFab}
@@ -139,6 +158,17 @@ export default function WebApp({ path, onReady }: Props) {
           hitSlop={12}
         >
           <Text style={styles.backFabText}>‹</Text>
+        </Pressable>
+      )}
+
+      {onOpenSettings && !loading && (
+        <Pressable
+          style={styles.settingsFab}
+          onPress={onOpenSettings}
+          hitSlop={12}
+          accessibilityLabel="Cấu hình URL web"
+        >
+          <Text style={styles.settingsFabText}>⚙</Text>
         </Pressable>
       )}
     </View>
@@ -165,11 +195,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
+    paddingHorizontal: 24,
   },
   loadingText: {
     color: "#57534e",
     fontSize: 15,
     fontWeight: "600",
+  },
+  loadingUrl: {
+    color: "#a8a29e",
+    fontSize: 11,
+    textAlign: "center",
+    maxWidth: 280,
   },
   progressTrack: {
     width: 160,
@@ -219,6 +256,15 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
   },
+  settingsLink: {
+    marginTop: 12,
+    padding: 8,
+  },
+  settingsLinkText: {
+    color: "#b45309",
+    fontWeight: "700",
+    fontSize: 14,
+  },
   backFab: {
     position: "absolute",
     left: 12,
@@ -235,5 +281,20 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 30,
     marginTop: -2,
+  },
+  settingsFab: {
+    position: "absolute",
+    right: 12,
+    bottom: 28,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(28,25,23,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  settingsFabText: {
+    color: "#fff",
+    fontSize: 18,
   },
 });

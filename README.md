@@ -2,13 +2,21 @@
 
 Repo **độc lập** để build file **`.ipa`** bằng GitHub Actions (không cần Mac), rồi ký cài bằng **ESign** trên iPhone.
 
-Giao diện app = WebView load bản web: [giapha-os.homielab.com](https://giapha-os.homielab.com)
+Giao diện app = **WebView** load đúng URL web bạn cấu hình (mặc định demo: [giapha-os.homielab.com](https://giapha-os.homielab.com)).
 
 | Tính năng | Mô tả |
 |-----------|--------|
-| UI | Giống 100% bản web |
-| Thông báo | Local: sinh nhật / giỗ / sự kiện |
-| Widget | Sự kiện sắp tới (cần App Group + mở app 1 lần) |
+| UI | Giống 100% bản web tại `web_url` |
+| Đổi URL trong app | Nút ⚙ góc phải dưới → nhập domain Vercel/site của bạn |
+| Thông báo | Local: sinh nhật / giỗ / sự kiện (cần Supabase đúng project) |
+| Widget | Sự kiện sắp tới (cần App Group + mở app 1 lần + Supabase) |
+
+### Dữ liệu không khớp web?
+
+1. IPA build với `web_url` **mặc định demo** → app mở site demo, không phải site riêng của bạn.  
+2. Trong app: bấm **⚙** → dán đúng URL bạn mở trên trình duyệt → **Lưu & tải lại**.  
+3. **Đăng nhập lại** trong app (cookie Safari không sang WebView).  
+4. Build IPA mới: Run workflow, điền `web_url` = URL thật + Supabase URL/key của project đó.
 
 ---
 
