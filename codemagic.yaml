@@ -1,0 +1,70 @@
+# Codemagic — thay thế GitHub Actions (Mac cloud, có free minutes)
+# Docs: https://docs.codemagic.io/yaml-quick-start/building-a-react-native-app/
+#
+# Setup:
+# 1. https://codemagic.io → Sign up bằng GitHub
+# 2. Add application → chọn repo giaphaos-ios
+# 3. Start new build → workflow: ipa-esign
+
+workflows:
+  ipa-esign:
+    name: IPA for ESign (unsigned)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      vars:
+        EXPO_PUBLIC_WEB_URL: https://giapha-os.homielab.com
+        EXPO_PUBLIC_SITE_NAME: Gia Phả OS
+        IOS_BUNDLE_ID: com.giaphaos.family
+        EXPO_PUBLIC_APP_GROUP: group.com.giaphaos.family
+        # Thêm trong UI Codemagic (Environment variables) nếu muốn widget:
+        # EXPO_PUBLIC_SUPABASE_URL
+        # EXPO_PUBLIC_SUPABASE_ANON_KEY
+      node: 22
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm ci
+      - name: Expo prebuild
+        script: |
+          npx expo prebuild -p ios --non-interactive --clean
+      - name: CocoaPods
+        script: |
+          cd ios
+          pod install
+      - name: Build unsigned Release
+        script: |
+          set -e
+          cd ios
+          WORKSPACE=$(ls -1 *.xcworkspace | head -1)
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
+            | awk '/Schemes:/{f=1;next} f&&NF{ if ($1!="Pods" && $1 !~ /Pods-/){ print $1; exit } }')
+          echo "Scheme=$SCHEME Workspace=$WORKSPACE"
+          DERIVED="$CM_BUILD_DIR/DerivedData"
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$DERIVED" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build
+          echo "DERIVED=$DERIVED" >> $CM_ENV
+      - name: Package IPA
+        script: |
+          set -e
+          APP_PATH=$(find "$DERIVED/Build/Products" -path "*Release-iphoneos/*.app" -type d ! -path "*.appex/*" | head -1)
+          echo "App: $APP_PATH"
+          mkdir -p "$CM_BUILD_DIR/dist/Payload"
+          cp -R "$APP_PATH" "$CM_BUILD_DIR/dist/Payload/"
+          cd "$CM_BUILD_DIR/dist"
+          zip -r -y GiaPhaOS-esign.ipa Payload
+          ls -lh GiaPhaOS-esign.ipa
+    artifacts:
+      - dist/GiaPhaOS-esign.ipa
