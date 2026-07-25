@@ -30,6 +30,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "postinstall": "bash scripts/patch-ios-deps.sh",
     "build:ipa": "bash scripts/build-ipa.sh preview",
     "build:ipa:store": "bash scripts/build-ipa.sh production",
     "typecheck": "tsc --noEmit"

@@ -80,7 +80,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # postinstall runs patch-ios-deps.sh; re-run explicitly for clarity in logs
+          bash scripts/patch-ios-deps.sh
 
       - name: Write build env
         run: |
