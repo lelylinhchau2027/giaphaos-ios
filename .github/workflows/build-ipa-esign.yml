@@ -31,12 +31,47 @@ concurrency:
 
 jobs:
   build-ipa:
-    runs-on: macos-14
+    # macos-14 default Xcode is 15.4 — RN 0.86 / Expo 57 require Xcode >= 16.1
+    # macos-15 default is Xcode 16.4
+    runs-on: macos-15
     timeout-minutes: 75
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode (>= 16.1 for React Native 0.86)
+        run: |
+          set -euo pipefail
+          # Prefer 16.4 (default on macos-15); fall back to any 16.x available
+          for candidate in \
+            /Applications/Xcode_16.4.app \
+            /Applications/Xcode_16.3.app \
+            /Applications/Xcode_16.2.app \
+            /Applications/Xcode_16.1.app \
+            /Applications/Xcode.app
+          do
+            if [[ -d "$candidate" ]]; then
+              sudo xcode-select -s "$candidate"
+              break
+            fi
+          done
+          echo "Selected: $(xcode-select -p)"
+          xcodebuild -version
+          # Fail early if still < 16.1
+          XCODE_VER=$(xcodebuild -version | awk '/Xcode/{print $2}')
+          python3 - <<'PY'
+          import os, sys
+          ver = os.popen("xcodebuild -version").read().split()
+          # "Xcode 16.4" -> 16.4
+          nums = [int(x) for x in ver[1].split(".")]
+          while len(nums) < 2:
+              nums.append(0)
+          if tuple(nums[:2]) < (16, 1):
+              print(f"ERROR: need Xcode >= 16.1, found {ver[1]}", file=sys.stderr)
+              sys.exit(1)
+          print(f"Xcode {ver[1]} OK")
+          PY
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -64,14 +99,21 @@ jobs:
           echo "IOS_BUNDLE_ID=${{ inputs.bundle_id }}" >> "$GITHUB_ENV"
           echo "EXPO_PUBLIC_APP_GROUP=group.${{ inputs.bundle_id }}" >> "$GITHUB_ENV"
           echo "EXPO_PUBLIC_SITE_NAME=Gia Phả OS" >> "$GITHUB_ENV"
+          echo "CI=1" >> "$GITHUB_ENV"
 
       - name: Expo prebuild (generate native ios/)
-        run: npx expo prebuild -p ios --non-interactive --clean
+        env:
+          CI: "1"
+        run: npx expo prebuild -p ios --clean
 
       - name: CocoaPods install
         working-directory: ios
         run: |
-          gem install cocoapods -N
+          # CocoaPods is preinstalled on GitHub macOS images; only install if missing
+          if ! command -v pod >/dev/null 2>&1; then
+            gem install cocoapods -N
+          fi
+          pod --version
           pod install --repo-update
 
       - name: Xcode build (unsigned, device arm64)
