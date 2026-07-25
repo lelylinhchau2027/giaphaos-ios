@@ -120,13 +120,22 @@ jobs:
         working-directory: ios
         run: |
           set -euo pipefail
-          WORKSPACE=$(ls -1 *.xcworkspace | head -1)
+          # .xcworkspace is a directory bundle — must use ls -d (or find -type d)
+          # otherwise `ls *.xcworkspace` lists contents (e.g. contents.xcworkspacedata)
+          WORKSPACE=$(find . -maxdepth 1 -type d -name '*.xcworkspace' | head -1)
+          WORKSPACE="${WORKSPACE#./}"
+          if [[ -z "${WORKSPACE:-}" || ! -d "$WORKSPACE" ]]; then
+            echo "ERROR: no .xcworkspace found in ios/"
+            ls -la
+            exit 1
+          fi
           echo "Workspace: $WORKSPACE"
+          ls -la "$WORKSPACE"
 
           echo "=== Schemes ==="
           xcodebuild -list -workspace "$WORKSPACE"
 
-          # Ưu tiên scheme trùng tên app; fallback scheme đầu tiên không phải Pods
+          # Prefer non-Pods scheme; fallback to first scheme
           SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
             | awk '
               /Schemes:/{f=1; next}
@@ -136,6 +145,10 @@ jobs:
           if [[ -z "${SCHEME:-}" ]]; then
             SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
               | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
+          fi
+          if [[ -z "${SCHEME:-}" ]]; then
+            echo "ERROR: no Xcode scheme found"
+            exit 1
           fi
           echo "Using scheme: $SCHEME"
 
