@@ -40,8 +40,8 @@ workflows:
           cd ios
           WORKSPACE=$(find . -maxdepth 1 -type d -name '*.xcworkspace' | head -1)
           WORKSPACE="${WORKSPACE#./}"
-          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
-            | awk '/Schemes:/{f=1;next} f&&NF{ if ($1!="Pods" && $1 !~ /Pods-/){ print $1; exit } }')
+          # App scheme = workspace basename (not first Pod scheme)
+          SCHEME="${WORKSPACE%.xcworkspace}"
           echo "Scheme=$SCHEME Workspace=$WORKSPACE"
           DERIVED="$CM_BUILD_DIR/DerivedData"
           xcodebuild \

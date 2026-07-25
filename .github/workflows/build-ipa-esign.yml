@@ -40,38 +40,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (>= 16.1 for React Native 0.86)
+      - name: Select Xcode (Swift 6.2 / Xcode 26.x)
         run: |
           set -euo pipefail
-          # Prefer 16.4 (default on macos-15); fall back to any 16.x available
+          echo "=== Available Xcode apps ==="
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+
+          # expo-modules-jsi Package.swift requires swift-tools-version 6.2.
+          # Xcode 16.4 ships Swift 6.1 → fails. Prefer Xcode 26.x (Swift 6.2).
+          SELECTED=""
           for candidate in \
-            /Applications/Xcode_16.4.app \
-            /Applications/Xcode_16.3.app \
-            /Applications/Xcode_16.2.app \
-            /Applications/Xcode_16.1.app \
-            /Applications/Xcode.app
+            /Applications/Xcode_26.3.app \
+            /Applications/Xcode_26.2.app \
+            /Applications/Xcode_26.1.1.app \
+            /Applications/Xcode_26.1.app \
+            /Applications/Xcode_26.0.1.app \
+            /Applications/Xcode_26.0.app \
+            /Applications/Xcode_26.app
           do
             if [[ -d "$candidate" ]]; then
-              sudo xcode-select -s "$candidate"
+              SELECTED="$candidate"
               break
             fi
           done
+          if [[ -z "$SELECTED" ]]; then
+            echo "ERROR: need Xcode 26.x (Swift 6.2) for expo-modules-jsi; none found"
+            exit 1
+          fi
+          sudo xcode-select -s "$SELECTED"
+          sudo xcodebuild -license accept 2>/dev/null || true
           echo "Selected: $(xcode-select -p)"
           xcodebuild -version
-          # Fail early if still < 16.1
-          XCODE_VER=$(xcodebuild -version | awk '/Xcode/{print $2}')
-          python3 - <<'PY'
-          import os, sys
-          ver = os.popen("xcodebuild -version").read().split()
-          # "Xcode 16.4" -> 16.4
-          nums = [int(x) for x in ver[1].split(".")]
-          while len(nums) < 2:
-              nums.append(0)
-          if tuple(nums[:2]) < (16, 1):
-              print(f"ERROR: need Xcode >= 16.1, found {ver[1]}", file=sys.stderr)
-              sys.exit(1)
-          print(f"Xcode {ver[1]} OK")
-          PY
+          swift --version || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -120,8 +120,7 @@ jobs:
         working-directory: ios
         run: |
           set -euo pipefail
-          # .xcworkspace is a directory bundle — must use ls -d (or find -type d)
-          # otherwise `ls *.xcworkspace` lists contents (e.g. contents.xcworkspacedata)
+          # .xcworkspace is a directory bundle — use find -type d (not bare ls)
           WORKSPACE=$(find . -maxdepth 1 -type d -name '*.xcworkspace' | head -1)
           WORKSPACE="${WORKSPACE#./}"
           if [[ -z "${WORKSPACE:-}" || ! -d "$WORKSPACE" ]]; then
@@ -130,24 +129,27 @@ jobs:
             exit 1
           fi
           echo "Workspace: $WORKSPACE"
-          ls -la "$WORKSPACE"
 
           echo "=== Schemes ==="
-          xcodebuild -list -workspace "$WORKSPACE"
+          SCHEME_LIST=$(xcodebuild -list -workspace "$WORKSPACE")
+          echo "$SCHEME_LIST"
 
-          # Prefer non-Pods scheme; fallback to first scheme
-          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
-            | awk '
+          # App scheme matches workspace name (GiaPhOS.xcworkspace → GiaPhOS).
+          # Do NOT pick first scheme (that was EXApplication / a Pod).
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          if ! echo "$SCHEME_LIST" | awk '/Schemes:/{f=1;next} f&&NF{print $1}' | grep -qx "$SCHEME"; then
+            echo "WARN: scheme '$SCHEME' not in list; trying non-Pods / non-Expo fallbacks"
+            SCHEME=$(echo "$SCHEME_LIST" | awk '
               /Schemes:/{f=1; next}
               f && NF {
-                if ($1 != "Pods" && $1 !~ /Pods-/) { print $1; exit }
+                s=$1
+                if (s ~ /^(Pods|EX|Expo|React|hermes|FB|RCT|RNC)/) next
+                if (s ~ /-/) next
+                print s; exit
               }')
-          if [[ -z "${SCHEME:-}" ]]; then
-            SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
-              | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
           fi
           if [[ -z "${SCHEME:-}" ]]; then
-            echo "ERROR: no Xcode scheme found"
+            echo "ERROR: no suitable Xcode scheme"
             exit 1
           fi
           echo "Using scheme: $SCHEME"
@@ -156,7 +158,9 @@ jobs:
           rm -rf "$DERIVED"
           mkdir -p "$DERIVED"
 
-          xcodebuild \
+          # Stream full log + keep a compact error summary on failure
+          set -o pipefail
+          if ! xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
@@ -166,8 +170,17 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
-            build
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          then
+            echo "======== xcodebuild errors (filtered) ========"
+            grep -E 'error:|fatal error:|BUILD FAILED|❌|SwiftCompile|clang: error' \
+              "$RUNNER_TEMP/xcodebuild.log" | tail -80 || true
+            exit 65
+          fi
 
           echo "DERIVED=$DERIVED" >> "$GITHUB_ENV"
 
