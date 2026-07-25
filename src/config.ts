@@ -10,12 +10,13 @@ type Extra = {
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
 
-/** URL bản web Gia Phả (Vercel) — UI app = đúng bản web này */
+/** @deprecated App native không còn WebView; giữ cho tương thích build cũ */
 export const WEB_URL =
   extra.webUrl ||
   process.env.EXPO_PUBLIC_WEB_URL ||
   "https://giapha-os.homielab.com";
 
+/** Supabase — nguồn dữ liệu duy nhất của app native (build-time defaults) */
 export const SUPABASE_URL =
   extra.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL || "";
 

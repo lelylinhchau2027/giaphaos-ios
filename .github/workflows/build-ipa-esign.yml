@@ -9,16 +9,16 @@ on:
   workflow_dispatch:
     inputs:
       web_url:
-        description: "URL web Gia Phả CỦA BẠN (Safari mở trang nào thì dán đúng URL đó)"
-        required: true
+        description: "(Không còn dùng cho UI native — có thể để mặc định)"
+        required: false
         default: "https://giapha-os.homielab.com"
       supabase_url:
-        description: "Supabase URL (tuỳ chọn — widget/thông báo)"
-        required: false
+        description: "Supabase URL (BẮT BUỘC — nguồn dữ liệu app)"
+        required: true
         default: ""
       supabase_anon_key:
-        description: "Supabase anon key (tuỳ chọn)"
-        required: false
+        description: "Supabase anon key (BẮT BUỘC)"
+        required: true
         default: ""
       bundle_id:
         description: "iOS Bundle ID"

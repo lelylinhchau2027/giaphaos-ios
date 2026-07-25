@@ -1,3 +1,8 @@
+import {
+  getSolarForLunarInYear,
+  solarFromLunarYmd,
+  solarToLunarParts,
+} from "../lib/lunar";
 import type {
   CustomEventRow,
   FamilyEventItem,
@@ -21,9 +26,125 @@ function daysBetween(from: Date, to: Date) {
   return Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+/** Occurrence (solar) of a custom event in a given solar year, or null. */
+export function customEventOccurrenceInYear(
+  ce: CustomEventRow,
+  year: number,
+): { date: Date; label: string } | null {
+  if (!ce.event_month || !ce.event_day) return null;
+  const calendar = ce.calendar_type === "lunar" ? "lunar" : "solar";
+  const recurring = ce.is_recurring !== false;
+
+  if (!recurring) {
+    if (!ce.event_year) return null;
+    if (calendar === "solar") {
+      if (ce.event_year !== year) return null;
+      return {
+        date: new Date(year, ce.event_month - 1, ce.event_day),
+        label: `${pad(ce.event_day)}/${pad(ce.event_month)}/${ce.event_year}`,
+      };
+    }
+    const occ = solarFromLunarYmd(ce.event_year, ce.event_month, ce.event_day);
+    if (!occ || occ.getFullYear() !== year) return null;
+    return {
+      date: occ,
+      label: `${pad(ce.event_day)}/${pad(ce.event_month)}/${ce.event_year} ÂL`,
+    };
+  }
+
+  if (calendar === "solar") {
+    return {
+      date: new Date(year, ce.event_month - 1, ce.event_day),
+      label: `${pad(ce.event_day)}/${pad(ce.event_month)}`,
+    };
+  }
+
+  const occ = getSolarForLunarInYear(ce.event_month, ce.event_day, year);
+  if (!occ) return null;
+  return {
+    date: occ,
+    label: `${pad(ce.event_day)}/${pad(ce.event_month)} ÂL`,
+  };
+}
+
+export function computeEventsForYear(
+  persons: PersonRow[],
+  customEvents: CustomEventRow[],
+  year: number,
+): FamilyEventItem[] {
+  const items: FamilyEventItem[] = [];
+  const today = startOfToday();
+
+  for (const p of persons) {
+    if (p.birth_month && p.birth_day) {
+      const occurrence = new Date(year, p.birth_month - 1, p.birth_day);
+      items.push({
+        id: `birth-${p.id}`,
+        personId: p.id,
+        personName: p.full_name,
+        type: "birthday",
+        date: toIsoLocal(occurrence),
+        eventDateLabel: `${pad(p.birth_day)}/${pad(p.birth_month)}`,
+        daysUntil: daysBetween(today, occurrence),
+        originYear: p.birth_year,
+        calendarType: "solar",
+        isRecurring: true,
+      });
+    }
+
+    if (p.is_deceased && p.death_month && p.death_day) {
+      const deathYear = p.death_year ?? year;
+      const lunar = solarToLunarParts(deathYear, p.death_month, p.death_day);
+      if (lunar) {
+        const occurrence = getSolarForLunarInYear(
+          lunar.month,
+          lunar.day,
+          year,
+        );
+        if (occurrence) {
+          items.push({
+            id: `death-${p.id}`,
+            personId: p.id,
+            personName: p.full_name,
+            type: "death_anniversary",
+            date: toIsoLocal(occurrence),
+            eventDateLabel: `${pad(lunar.day)}/${pad(lunar.month)} ÂL`,
+            daysUntil: daysBetween(today, occurrence),
+            originYear: p.death_year,
+            calendarType: "lunar",
+            isRecurring: true,
+          });
+        }
+      }
+    }
+  }
+
+  for (const ce of customEvents) {
+    const hit = customEventOccurrenceInYear(ce, year);
+    if (!hit) continue;
+    items.push({
+      id: ce.id,
+      personName: ce.title,
+      type: "custom",
+      date: toIsoLocal(hit.date),
+      eventDateLabel: hit.label,
+      daysUntil: daysBetween(today, hit.date),
+      originYear: ce.event_year ?? null,
+      calendarType: ce.calendar_type === "lunar" ? "lunar" : "solar",
+      isRecurring: ce.is_recurring !== false,
+    });
+  }
+
+  items.sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      a.personName.localeCompare(b.personName, "vi"),
+  );
+  return items;
+}
+
 /**
- * Tính sự kiện 0–30 ngày tới (sinh nhật dương lịch, giỗ dương lịch đơn giản, custom).
- * Widget + local notification dùng bộ này — không phụ thuộc lunar-javascript.
+ * Sự kiện trong [0, withinDays] ngày tới (widget + home).
  */
 export function computeUpcomingEvents(
   persons: PersonRow[],
@@ -32,69 +153,25 @@ export function computeUpcomingEvents(
 ): FamilyEventItem[] {
   const today = startOfToday();
   const year = today.getFullYear();
-  const items: FamilyEventItem[] = [];
+  const pool = [
+    ...computeEventsForYear(persons, customEvents, year),
+    ...computeEventsForYear(persons, customEvents, year + 1),
+  ];
 
-  const pushIfUpcoming = (
-    month: number,
-    day: number,
-    base: Omit<FamilyEventItem, "date" | "daysUntil" | "eventDateLabel"> & {
-      eventDateLabel?: string;
-    },
-  ) => {
-    // Ứng viên năm nay và năm sau
-    for (const y of [year, year + 1]) {
-      const occurrence = new Date(y, month - 1, day);
-      if (Number.isNaN(occurrence.getTime())) continue;
-      const diff = daysBetween(today, occurrence);
-      if (diff >= 0 && diff <= withinDays) {
-        items.push({
-          ...base,
-          date: toIsoLocal(occurrence),
-          daysUntil: diff,
-          eventDateLabel:
-            base.eventDateLabel ?? `${pad(day)}/${pad(month)}`,
-        });
-        break;
-      }
-    }
-  };
-
-  for (const p of persons) {
-    if (p.birth_month && p.birth_day) {
-      pushIfUpcoming(p.birth_month, p.birth_day, {
-        id: `birth-${p.id}`,
-        personId: p.id,
-        personName: p.full_name,
-        type: "birthday",
-        originYear: p.birth_year,
-      });
-    }
-
-    if (p.is_deceased && p.death_month && p.death_day) {
-      pushIfUpcoming(p.death_month, p.death_day, {
-        id: `death-${p.id}`,
-        personId: p.id,
-        personName: p.full_name,
-        type: "death_anniversary",
-        originYear: p.death_year,
-        eventDateLabel: `${pad(p.death_day)}/${pad(p.death_month)} (giỗ)`,
-      });
-    }
+  const seen = new Set<string>();
+  const out: FamilyEventItem[] = [];
+  for (const e of pool) {
+    if (seen.has(e.id)) continue;
+    if (e.daysUntil < 0 || e.daysUntil > withinDays) continue;
+    seen.add(e.id);
+    out.push(e);
   }
-
-  for (const ce of customEvents) {
-    if (ce.event_month && ce.event_day) {
-      pushIfUpcoming(ce.event_month, ce.event_day, {
-        id: `custom-${ce.id}`,
-        personName: ce.title,
-        type: "custom",
-        originYear: ce.event_year ?? null,
-      });
-    }
-  }
-
-  items.sort((a, b) => a.daysUntil - b.daysUntil || a.personName.localeCompare(b.personName, "vi"));
-  return items;
+  out.sort(
+    (a, b) =>
+      a.daysUntil - b.daysUntil ||
+      a.personName.localeCompare(b.personName, "vi"),
+  );
+  return out;
 }
 
 export function eventTypeLabel(type: FamilyEventItem["type"]) {
@@ -108,4 +185,13 @@ export function eventTypeLabel(type: FamilyEventItem["type"]) {
     default:
       return "Sự kiện";
   }
+}
+
+export function daysUntilLabel(days: number): string {
+  if (days === 0) return "Hôm nay";
+  if (days === 1) return "Ngày mai";
+  if (days < 0) return "Đã qua";
+  if (days <= 30) return `${days} ngày nữa`;
+  if (days <= 60) return `${Math.ceil(days / 7)} tuần nữa`;
+  return `${Math.ceil(days / 30)} tháng nữa`;
 }

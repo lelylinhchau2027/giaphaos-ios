@@ -1,54 +1,68 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { WEB_URL as BUILT_IN_WEB_URL } from "../config";
+import {
+  SITE_NAME as BUILT_IN_SITE_NAME,
+  SUPABASE_ANON_KEY as BUILT_IN_ANON,
+  SUPABASE_URL as BUILT_IN_URL,
+} from "../config";
 
-const KEY_WEB_URL = "@giaphaos/web_url";
+const KEY_SUPABASE_URL = "@giaphaos/supabase_url";
+const KEY_SUPABASE_ANON = "@giaphaos/supabase_anon";
+const KEY_SITE_NAME = "@giaphaos/site_name";
 
-export type AppSettings = {
-  /** URL web thực tế app sẽ mở. Null = dùng URL build-in. */
-  webUrl: string | null;
+export type RuntimeConfig = {
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+  siteName: string;
 };
 
-export function getBuiltInWebUrl(): string {
-  return BUILT_IN_WEB_URL.replace(/\/$/, "");
-}
-
-export async function loadSettings(): Promise<AppSettings> {
+export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   try {
-    const webUrl = await AsyncStorage.getItem(KEY_WEB_URL);
+    const [url, anon, site] = await Promise.all([
+      AsyncStorage.getItem(KEY_SUPABASE_URL),
+      AsyncStorage.getItem(KEY_SUPABASE_ANON),
+      AsyncStorage.getItem(KEY_SITE_NAME),
+    ]);
     return {
-      webUrl: webUrl && webUrl.trim() ? webUrl.trim().replace(/\/$/, "") : null,
+      supabaseUrl: (url || BUILT_IN_URL || "").replace(/\/$/, ""),
+      supabaseAnonKey: anon || BUILT_IN_ANON || "",
+      siteName: site || BUILT_IN_SITE_NAME || "Gia Phả OS",
     };
   } catch {
-    return { webUrl: null };
+    return {
+      supabaseUrl: BUILT_IN_URL.replace(/\/$/, ""),
+      supabaseAnonKey: BUILT_IN_ANON,
+      siteName: BUILT_IN_SITE_NAME,
+    };
   }
 }
 
-export async function saveWebUrl(url: string | null): Promise<void> {
-  if (!url || !url.trim()) {
-    await AsyncStorage.removeItem(KEY_WEB_URL);
-    return;
-  }
-  let cleaned = url.trim();
-  if (!/^https?:\/\//i.test(cleaned)) {
-    cleaned = `https://${cleaned}`;
-  }
-  cleaned = cleaned.replace(/\/$/, "");
-  await AsyncStorage.setItem(KEY_WEB_URL, cleaned);
+export async function saveRuntimeConfig(
+  partial: Partial<RuntimeConfig>,
+): Promise<RuntimeConfig> {
+  const current = await loadRuntimeConfig();
+  const next: RuntimeConfig = {
+    supabaseUrl: (partial.supabaseUrl ?? current.supabaseUrl)
+      .trim()
+      .replace(/\/$/, ""),
+    supabaseAnonKey: (partial.supabaseAnonKey ?? current.supabaseAnonKey).trim(),
+    siteName: (partial.siteName ?? current.siteName).trim() || "Gia Phả OS",
+  };
+  await Promise.all([
+    next.supabaseUrl
+      ? AsyncStorage.setItem(KEY_SUPABASE_URL, next.supabaseUrl)
+      : AsyncStorage.removeItem(KEY_SUPABASE_URL),
+    next.supabaseAnonKey
+      ? AsyncStorage.setItem(KEY_SUPABASE_ANON, next.supabaseAnonKey)
+      : AsyncStorage.removeItem(KEY_SUPABASE_ANON),
+    AsyncStorage.setItem(KEY_SITE_NAME, next.siteName),
+  ]);
+  return next;
 }
 
-/** URL hiệu lực: override người dùng → URL lúc build. */
-export async function resolveWebUrl(): Promise<string> {
-  const { webUrl } = await loadSettings();
-  return webUrl || getBuiltInWebUrl();
-}
-
-export function isValidHttpUrl(value: string): boolean {
-  try {
-    const u = new URL(
-      /^https?:\/\//i.test(value.trim()) ? value.trim() : `https://${value.trim()}`,
-    );
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
+export function getBuiltInSupabase() {
+  return {
+    supabaseUrl: BUILT_IN_URL.replace(/\/$/, ""),
+    supabaseAnonKey: BUILT_IN_ANON,
+    siteName: BUILT_IN_SITE_NAME,
+  };
 }

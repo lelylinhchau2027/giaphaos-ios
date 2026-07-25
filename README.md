@@ -1,78 +1,54 @@
-# Gia Phả OS — iOS (ESign)
+# Gia Phả OS — iOS (native + Supabase)
 
-Repo **độc lập** để build file **`.ipa`** bằng GitHub Actions (không cần Mac), rồi ký cài bằng **ESign** trên iPhone.
+App **native** (React Native / Expo): giao diện do IPA vẽ, **dữ liệu chỉ từ Supabase** (không phụ thuộc WebView).
 
-Giao diện app = **WebView** load đúng URL web bạn cấu hình (mặc định demo: [giapha-os.homielab.com](https://giapha-os.homielab.com)).
+| Tab | Chức năng |
+|-----|-----------|
+| Trang chủ | Tổng quan + sự kiện 30 ngày tới |
+| Lịch | Sinh nhật, giỗ (âm), sự kiện tùy chỉnh — thêm **âm/dương**, **hằng năm / một lần** |
+| Thành viên | Danh sách + chi tiết quan hệ |
+| Cài đặt | Supabase URL / anon key / tên site |
 
-| Tính năng | Mô tả |
-|-----------|--------|
-| UI | Giống 100% bản web tại `web_url` |
-| Đổi URL trong app | Nút ⚙ góc phải dưới → nhập domain Vercel/site của bạn |
-| Thông báo | Local: sinh nhật / giỗ / sự kiện (cần Supabase đúng project) |
-| Widget | Sự kiện sắp tới (cần App Group + mở app 1 lần + Supabase) |
-
-### Dữ liệu không khớp web?
-
-1. IPA build với `web_url` **mặc định demo** → app mở site demo, không phải site riêng của bạn.  
-2. Trong app: bấm **⚙** → dán đúng URL bạn mở trên trình duyệt → **Lưu & tải lại**.  
-3. **Đăng nhập lại** trong app (cookie Safari không sang WebView).  
-4. Build IPA mới: Run workflow, điền `web_url` = URL thật + Supabase URL/key của project đó.
+Widget + thông báo local vẫn sync từ cùng Supabase.
 
 ---
 
-## Cách dùng (tóm tắt)
+## Migration bắt buộc (sự kiện âm lịch)
 
-### 1. Tạo repo GitHub mới (một lần)
+Trên **Supabase → SQL Editor**, chạy:
 
-Trên GitHub.com → **New repository** → tên gợi ý: `giaphaos-ios` → **Create** (không tích README).
+`docs/migrations/2026-07-25_custom_events_calendar.sql`
 
-Trên máy:
+Thêm cột:
 
-```bash
-cd giaphaos-ios
-git remote add origin https://github.com/<USER>/giaphaos-ios.git
-git push -u origin main
-```
-
-### 2. Build IPA (mỗi khi cần file mới)
-
-1. GitHub → tab **Actions**
-2. **Build IPA for ESign** → **Run workflow**
-3. (Tuỳ chọn) điền Supabase URL + anon key
-4. Đợi ~15–25 phút
-5. **Artifacts** → tải `GiaPhaOS-esign-ipa` → file `GiaPhaOS-esign.ipa`
-
-### 3. Ký bằng ESign
-
-1. Đưa `.ipa` vào iPhone  
-2. ESign → Import IPA → chọn chứng chỉ → **Ký & cài**  
-3. Mở app 1 lần (cho phép thông báo)
-
-Chi tiết: **[HUONG_DAN_ESIGN.md](./HUONG_DAN_ESIGN.md)**
+- `calendar_type`: `solar` | `lunar`
+- `is_recurring`: `true` (hằng năm) / `false` (một lần + `event_year`)
 
 ---
 
-## Cấu hình build (workflow inputs)
+## Build IPA (GitHub Actions)
 
-| Input | Mặc định |
-|-------|----------|
-| `web_url` | `https://giapha-os.homielab.com` |
-| `bundle_id` | `com.giaphaos.family` |
-| `supabase_url` | (trống) |
-| `supabase_anon_key` | (trống) |
+1. **Actions** → **Build IPA for ESign** → **Run workflow**
+2. Điền **bắt buộc**:
+   - `supabase_url` = project của bạn  
+   - `supabase_anon_key` = anon key  
+3. `web_url` không còn dùng cho UI (có thể để mặc định)
+4. Tải artifact → ESign trên iPhone
+
+Hoặc sau khi cài app: **Cài đặt** → dán Supabase URL/key → Lưu.
 
 ---
 
-## Dev local (tuỳ chọn, không ra IPA device)
+## Dev local
 
 ```bash
 npm install
-cp .env.example .env
+cp .env.example .env   # điền EXPO_PUBLIC_SUPABASE_*
 npm start
 ```
 
 ---
 
-## License
+## Web (repo giaphaos)
 
-Private / gia đình — xem `LICENSE`.
+Form “Thêm sự kiện” trên web cũng hỗ trợ âm lịch + một lần/hằng năm (cùng schema).
