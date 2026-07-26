@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -16,9 +16,15 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   onSubmit: (row: CustomEventInsert) => Promise<void>;
+  initial?: Partial<CustomEventInsert> | null;
 };
 
-export default function EventFormModal({ visible, onClose, onSubmit }: Props) {
+export default function EventFormModal({
+  visible,
+  onClose,
+  onSubmit,
+  initial,
+}: Props) {
   const now = new Date();
   const [title, setTitle] = useState("");
   const [day, setDay] = useState(String(now.getDate()));
@@ -30,14 +36,19 @@ export default function EventFormModal({ visible, onClose, onSubmit }: Props) {
   const [saving, setSaving] = useState(false);
 
   const reset = () => {
-    setTitle("");
-    setDay(String(new Date().getDate()));
-    setMonth(String(new Date().getMonth() + 1));
-    setYear(String(new Date().getFullYear()));
-    setCalendarType("solar");
-    setIsRecurring(true);
+    setTitle(initial?.title || "");
+    setDay(String(initial?.event_day ?? new Date().getDate()));
+    setMonth(String(initial?.event_month ?? new Date().getMonth() + 1));
+    setYear(String(initial?.event_year ?? new Date().getFullYear()));
+    setCalendarType(initial?.calendar_type || "solar");
+    setIsRecurring(initial?.is_recurring !== false);
     setError(null);
   };
+
+  useEffect(() => {
+    if (visible) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, initial?.title, initial?.event_day, initial?.event_month]);
 
   const handleClose = () => {
     reset();

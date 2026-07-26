@@ -43,6 +43,7 @@ module.exports = {
     },
   },
   plugins: [
+    "expo-router",
     "expo-splash-screen",
     [
       "expo-notifications",
@@ -59,6 +60,13 @@ module.exports = {
         ios: {
           deploymentTarget: "16.4",
         },
+      },
+    ],
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "Cho phép chọn ảnh đại diện thành viên trong gia phả.",
       },
     ],
     "@bacons/apple-targets",
