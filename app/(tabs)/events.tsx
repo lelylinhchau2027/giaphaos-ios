@@ -89,10 +89,7 @@ export default function EventsTab() {
   }, [reload]);
 
   const onAdd = async (row: CustomEventInsert) => {
-    const created = await insertCustomEvent(config, row);
-    const next = [...customEvents, created];
-    setCustomEvents(next);
-    // syncNative uses latest context; force reload path via reload for widget
+    await insertCustomEvent(config, row);
     await reload();
   };
 

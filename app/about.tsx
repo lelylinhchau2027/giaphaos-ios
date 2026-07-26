@@ -14,9 +14,8 @@ export default function AboutScreen() {
         Dữ liệu lưu trên Supabase. Widget màn hình chính và thông báo local
         đồng bộ khi mở app.
       </Text>
-      <Text style={styles.p}>th
-         Phát triển bởi Nam Cậu
-      </Text>
+      <Text style={styles.p}>Phiên bản app 1.0.0 (build 2).</Text>
+      <Text style={styles.p}>Phát triển bởi Nam Cậu</Text>
     </ScrollView>
   );
 }
