@@ -48,8 +48,6 @@ export default function EventsTab() {
     loading,
     error,
     reload,
-    setCustomEvents,
-    syncNative,
   } = useFamilyData();
 
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -92,19 +90,18 @@ export default function EventsTab() {
 
   const onAdd = async (row: CustomEventInsert) => {
     const created = await insertCustomEvent(config, row);
-    setCustomEvents([...customEvents, created]);
-    await syncNative();
+    const next = [...customEvents, created];
+    setCustomEvents(next);
+    // syncNative uses latest context; force reload path via reload for widget
+    await reload();
   };
 
   const onEditSave = async (row: CustomEventInsert) => {
     if (!editing || editing.type !== "custom") return;
     try {
-      const updated = await updateCustomEvent(config, editing.id, row);
-      setCustomEvents(
-        customEvents.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
-      );
+      await updateCustomEvent(config, editing.id, row);
       setEditing(null);
-      await syncNative();
+      await reload();
     } catch (e) {
       Alert.alert("Lỗi", e instanceof Error ? e.message : "Không sửa được");
       throw e;
@@ -125,8 +122,7 @@ export default function EventsTab() {
         onPress: async () => {
           try {
             await deleteCustomEvent(config, ev.id);
-            setCustomEvents(customEvents.filter((c) => c.id !== ev.id));
-            await syncNative();
+            await reload();
           } catch (e) {
             Alert.alert(
               "Lỗi",

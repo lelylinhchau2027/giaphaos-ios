@@ -18,5 +18,16 @@ export function getSupabase(cfg: RuntimeConfig): SupabaseClient | null {
 }
 
 export function hasConfig(cfg: RuntimeConfig) {
-  return Boolean(cfg.supabaseUrl && cfg.supabaseAnonKey);
+  const url = (cfg.supabaseUrl || "").trim();
+  const key = (cfg.supabaseAnonKey || "").trim();
+  if (!url || !key) return false;
+  // Placeholder from CI build — user must paste real anon key in Settings
+  if (
+    key === "SET_IN_APP_SETTINGS" ||
+    key.startsWith("eyJhbGciOi...") ||
+    key.length < 30
+  ) {
+    return false;
+  }
+  return url.startsWith("http");
 }

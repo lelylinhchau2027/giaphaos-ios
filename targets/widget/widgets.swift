@@ -26,12 +26,57 @@ private enum AppGroupStore {
         defaults.string(forKey: "updatedAt") ?? ""
     }
 
+    static var windowDays: Int {
+        let v = defaults.integer(forKey: "windowDays")
+        return v > 0 ? v : 45
+    }
+
+    static var syncError: String {
+        defaults.string(forKey: "syncError") ?? ""
+    }
+
+    static var hasKey: Bool {
+        defaults.integer(forKey: "hasKey") == 1
+    }
+
+    /// Read events from App Group — supports both String JSON and Data JSON.
     static var events: [WidgetEvent] {
-        guard let raw = defaults.string(forKey: "eventsJson"),
-              let data = raw.data(using: .utf8),
-              let list = try? JSONDecoder().decode([WidgetEvent].self, from: data)
-        else { return [] }
-        return list
+        // 1) String key "eventsJson"
+        if let raw = defaults.string(forKey: "eventsJson"),
+           let data = raw.data(using: .utf8),
+           let list = decodeEvents(data) {
+            return list
+        }
+        // 2) Data key "eventsJson"
+        if let data = defaults.data(forKey: "eventsJson"),
+           let list = decodeEvents(data) {
+            return list
+        }
+        // 3) Data key "events" (setArray from ExtensionStorage)
+        if let data = defaults.data(forKey: "events"),
+           let list = decodeEvents(data) {
+            return list
+        }
+        // 4) String key "events"
+        if let raw = defaults.string(forKey: "events"),
+           let data = raw.data(using: .utf8),
+           let list = decodeEvents(data) {
+            return list
+        }
+        return []
+    }
+
+    private static func decodeEvents(_ data: Data) -> [WidgetEvent]? {
+        // Flexible decoder: tolerate missing optionals / extra fields
+        let decoder = JSONDecoder()
+        if let list = try? decoder.decode([WidgetEvent].self, from: data) {
+            return list
+        }
+        // Sometimes wrapped or pretty-printed with unexpected types (daysUntil as Double)
+        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return nil
+        }
+        return arr.compactMap { WidgetEvent(dict: $0) }
     }
 }
 
@@ -44,6 +89,57 @@ struct WidgetEvent: Codable, Identifiable, Hashable {
     let eventDateLabel: String
     let daysUntil: Int
     let originYear: Int?
+
+    init(
+        id: String,
+        personId: String?,
+        personName: String,
+        type: String,
+        date: String,
+        eventDateLabel: String,
+        daysUntil: Int,
+        originYear: Int?
+    ) {
+        self.id = id
+        self.personId = personId
+        self.personName = personName
+        self.type = type
+        self.date = date
+        self.eventDateLabel = eventDateLabel
+        self.daysUntil = daysUntil
+        self.originYear = originYear
+    }
+
+    init?(dict: [String: Any]) {
+        guard let personName = dict["personName"] as? String else { return nil }
+        let id = (dict["id"] as? String)
+            ?? (dict["id"] as? NSNumber)?.stringValue
+            ?? UUID().uuidString
+        self.id = id
+        self.personId = dict["personId"] as? String
+        self.personName = personName
+        self.type = (dict["type"] as? String) ?? "custom"
+        self.date = (dict["date"] as? String) ?? ""
+        self.eventDateLabel = (dict["eventDateLabel"] as? String) ?? ""
+        if let d = dict["daysUntil"] as? Int {
+            self.daysUntil = d
+        } else if let d = dict["daysUntil"] as? Double {
+            self.daysUntil = Int(d)
+        } else if let n = dict["daysUntil"] as? NSNumber {
+            self.daysUntil = n.intValue
+        } else {
+            self.daysUntil = 0
+        }
+        if let y = dict["originYear"] as? Int {
+            self.originYear = y
+        } else if let y = dict["originYear"] as? Double {
+            self.originYear = Int(y)
+        } else if let n = dict["originYear"] as? NSNumber {
+            self.originYear = n.intValue
+        } else {
+            self.originYear = nil
+        }
+    }
 
     var typeLabel: String {
         switch type {
@@ -65,6 +161,8 @@ struct WidgetEvent: Codable, Identifiable, Hashable {
     var whenText: String {
         if daysUntil == 0 { return "Hôm nay" }
         if daysUntil == 1 { return "Ngày mai" }
+        if daysUntil < 0 { return "Đã qua" }
+        if daysUntil <= 30 { return "Còn \(daysUntil) ngày" }
         return "Còn \(daysUntil) ngày"
     }
 }
@@ -77,6 +175,8 @@ struct SimpleEntry: TimelineEntry {
     let memberCount: Int
     let events: [WidgetEvent]
     let updatedAt: String
+    let windowDays: Int
+    let statusNote: String
 }
 
 struct Provider: TimelineProvider {
@@ -97,7 +197,9 @@ struct Provider: TimelineProvider {
                     originYear: 1950
                 )
             ],
-            updatedAt: ""
+            updatedAt: "",
+            windowDays: 45,
+            statusNote: ""
         )
     }
 
@@ -107,17 +209,35 @@ struct Provider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
         let entry = loadEntry()
-        let next = Calendar.current.date(byAdding: .hour, value: 1, to: Date()) ?? Date().addingTimeInterval(3600)
+        // Refresh more often so new events appear sooner
+        let next = Calendar.current.date(byAdding: .minute, value: 30, to: Date())
+            ?? Date().addingTimeInterval(1800)
         completion(Timeline(entries: [entry], policy: .after(next)))
     }
 
     private func loadEntry() -> SimpleEntry {
-        SimpleEntry(
+        let events = AppGroupStore.events
+        var note = ""
+        if !events.isEmpty {
+            note = ""
+        } else if !AppGroupStore.syncError.isEmpty {
+            note = AppGroupStore.syncError
+        } else if AppGroupStore.memberCount == 0 && !AppGroupStore.hasKey {
+            note = "Mở app → Cài đặt → nhập Supabase, rồi mở lại widget"
+        } else if AppGroupStore.memberCount == 0 {
+            note = "Mở app Gia Phả một lần để đồng bộ"
+        } else {
+            note = "Chưa có sự kiện sắp tới — thêm ngày sinh/sự kiện trong app"
+        }
+
+        return SimpleEntry(
             date: Date(),
             siteName: AppGroupStore.siteName,
             memberCount: AppGroupStore.memberCount,
-            events: AppGroupStore.events,
-            updatedAt: AppGroupStore.updatedAt
+            events: events,
+            updatedAt: AppGroupStore.updatedAt,
+            windowDays: AppGroupStore.windowDays,
+            statusNote: note
         )
     }
 }
@@ -167,12 +287,15 @@ struct SmallWidgetView: View {
                     .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
             } else {
                 Spacer(minLength: 0)
-                Text(entry.memberCount > 0 ? "\(entry.memberCount) thành viên" : "Chưa có sự kiện")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
-                Text("Mở app để đồng bộ")
+                if entry.memberCount > 0 {
+                    Text("\(entry.memberCount) thành viên")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
+                }
+                Text(entry.statusNote.isEmpty ? "Chưa có sự kiện" : entry.statusNote)
                     .font(.caption2)
                     .foregroundColor(Color(red: 0.66, green: 0.64, blue: 0.62))
+                    .lineLimit(3)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -189,6 +312,7 @@ struct MediumWidgetView: View {
                 Text("🌳 \(entry.siteName)")
                     .font(.subheadline.weight(.bold))
                     .foregroundColor(Color(red: 0.16, green: 0.14, blue: 0.13))
+                    .lineLimit(1)
                 Spacer()
                 Text("\(entry.memberCount) TV")
                     .font(.caption.weight(.semibold))
@@ -200,10 +324,13 @@ struct MediumWidgetView: View {
             }
 
             if entry.events.isEmpty {
-                Text("Không có sự kiện trong 7 ngày tới")
+                Text(entry.statusNote.isEmpty
+                     ? "Chưa có sự kiện sắp tới"
+                     : entry.statusNote)
                     .font(.caption)
                     .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
-                Text("Mở app Gia Phả để đồng bộ widget")
+                    .lineLimit(3)
+                Text("Tab Lịch → thêm sự kiện · Cài đặt → Đồng bộ widget")
                     .font(.caption2)
                     .foregroundColor(Color(red: 0.66, green: 0.64, blue: 0.62))
                 Spacer()
@@ -261,7 +388,9 @@ struct LargeWidgetView: View {
 
             if entry.events.isEmpty {
                 Spacer()
-                Text("Mở app Gia Phả một lần để đồng bộ dữ liệu widget.")
+                Text(entry.statusNote.isEmpty
+                     ? "Mở app Gia Phả để đồng bộ widget."
+                     : entry.statusNote)
                     .font(.caption)
                     .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
                 Spacer()

@@ -14,9 +14,8 @@ export default function AboutScreen() {
         Dữ liệu lưu trên Supabase. Widget màn hình chính và thông báo local
         đồng bộ khi mở app.
       </Text>
-      <Text style={styles.p}>
-        Giao diện bám theo bản web Gia Phả OS (stone + amber). Phiên bản app
-        1.0.0.
+      <Text style={styles.p}>th
+         Phát triển bởi Nam Cậu
       </Text>
     </ScrollView>
   );

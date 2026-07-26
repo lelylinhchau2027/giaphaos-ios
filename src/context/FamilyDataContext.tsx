@@ -7,7 +7,8 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { AppState } from "react-native";
+import { AppState, View } from "react-native";
+import BootSplash from "../components/BootSplash";
 import { ensureNotificationPermissions } from "../services/notifications";
 import {
   loadRuntimeConfig,
@@ -15,7 +16,10 @@ import {
   type RuntimeConfig,
 } from "../services/settings";
 import { fetchFamilyData, hasConfig } from "../services/supabaseData";
-import { syncWidgetAndNotifications } from "../services/widgetSync";
+import {
+  syncWidgetAndNotifications,
+  type SyncResult,
+} from "../services/widgetSync";
 import type { CustomEventRow, Person, Relationship } from "../types";
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
@@ -30,18 +34,20 @@ type FamilyDataContextValue = {
   error: string | null;
   canEdit: boolean;
   isAdmin: boolean;
+  lastSync: SyncResult | null;
   reload: () => Promise<void>;
   setCustomEvents: (events: CustomEventRow[]) => void;
   setPersons: (persons: Person[]) => void;
   setRelationships: (rels: Relationship[]) => void;
   saveConfig: (partial: Partial<RuntimeConfig>) => Promise<void>;
-  syncNative: () => Promise<void>;
+  syncNative: () => Promise<SyncResult>;
 };
 
 const FamilyDataContext = createContext<FamilyDataContextValue | null>(null);
 
 export function FamilyDataProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
+  const [bootMessage, setBootMessage] = useState("Đang khởi động…");
   const [config, setConfig] = useState<RuntimeConfig>({
     supabaseUrl: "",
     supabaseAnonKey: "",
@@ -52,8 +58,8 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
   const [customEvents, setCustomEvents] = useState<CustomEventRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<SyncResult | null>(null);
 
-  // Mirror web: open RLS / always editable
   const canEdit = true;
   const isAdmin = true;
 
@@ -65,7 +71,7 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
       setError(
         "Chưa có Supabase URL/key. Vào Cài đặt hoặc truyền khi build workflow.",
       );
-      return;
+      return { persons: [] as Person[], customEvents: [] as CustomEventRow[] };
     }
     setLoading(true);
     setError(null);
@@ -74,28 +80,61 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
       setPersons(data.persons);
       setRelationships(data.relationships);
       setCustomEvents(data.customEvents);
+      return {
+        persons: data.persons,
+        customEvents: data.customEvents,
+      };
     } catch (e) {
       setError(e instanceof Error ? e.message : "Lỗi tải dữ liệu");
+      return { persons: [] as Person[], customEvents: [] as CustomEventRow[] };
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const syncNative = useCallback(async () => {
-    await syncWidgetAndNotifications().catch(() => undefined);
-  }, []);
+  const syncNative = useCallback(
+    async (override?: {
+      persons?: Person[];
+      customEvents?: CustomEventRow[];
+      siteName?: string;
+    }): Promise<SyncResult> => {
+      const result = await syncWidgetAndNotifications({
+        persons: override?.persons ?? persons,
+        customEvents: override?.customEvents ?? customEvents,
+        siteName: override?.siteName ?? config.siteName,
+      }).catch(
+        (e): SyncResult => ({
+          ok: false,
+          memberCount: 0,
+          eventCount: 0,
+          error: e instanceof Error ? e.message : "sync failed",
+        }),
+      );
+      setLastSync(result);
+      return result;
+    },
+    [persons, customEvents, config.siteName],
+  );
 
   const reload = useCallback(async () => {
-    await loadData(config);
-    await syncNative();
+    const data = await loadData(config);
+    await syncNative({
+      persons: data.persons,
+      customEvents: data.customEvents,
+      siteName: config.siteName,
+    });
   }, [config, loadData, syncNative]);
 
   const saveConfig = useCallback(
     async (partial: Partial<RuntimeConfig>) => {
       const next = await saveRuntimeConfig(partial);
       setConfig(next);
-      await loadData(next);
-      await syncNative();
+      const data = await loadData(next);
+      await syncNative({
+        persons: data.persons,
+        customEvents: data.customEvents,
+        siteName: next.siteName,
+      });
     },
     [loadData, syncNative],
   );
@@ -103,11 +142,26 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     (async () => {
       try {
+        setBootMessage("Đang đọc cấu hình…");
         const cfg = await loadRuntimeConfig();
         setConfig(cfg);
-        await ensureNotificationPermissions();
-        await loadData(cfg);
-        await syncNative();
+
+        setBootMessage("Đang xin quyền thông báo…");
+        await ensureNotificationPermissions().catch(() => undefined);
+
+        setBootMessage(
+          hasConfig(cfg) ? "Đang tải dữ liệu gia phả…" : "Chưa cấu hình Supabase…",
+        );
+        const data = await loadData(cfg);
+
+        setBootMessage("Đang đồng bộ widget…");
+        await syncWidgetAndNotifications({
+          persons: data.persons,
+          customEvents: data.customEvents,
+          siteName: cfg.siteName,
+        })
+          .then((r) => setLastSync(r))
+          .catch(() => undefined);
       } catch (e) {
         console.warn("bootstrap", e);
       } finally {
@@ -115,17 +169,26 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
         await SplashScreen.hideAsync().catch(() => undefined);
       }
     })();
-  }, [loadData, syncNative]);
+    // bootstrap once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state === "active" && ready) {
-        loadData(config).catch(() => undefined);
-        syncNative().catch(() => undefined);
+        loadData(config)
+          .then((data) =>
+            syncWidgetAndNotifications({
+              persons: data.persons,
+              customEvents: data.customEvents,
+              siteName: config.siteName,
+            }).then((r) => setLastSync(r)),
+          )
+          .catch(() => undefined);
       }
     });
     return () => sub.remove();
-  }, [config, loadData, ready, syncNative]);
+  }, [config, loadData, ready]);
 
   const value = useMemo(
     () => ({
@@ -138,12 +201,13 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
       error,
       canEdit,
       isAdmin,
+      lastSync,
       reload,
       setCustomEvents,
       setPersons,
       setRelationships,
       saveConfig,
-      syncNative,
+      syncNative: () => syncNative(),
     }),
     [
       ready,
@@ -155,6 +219,7 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
       error,
       canEdit,
       isAdmin,
+      lastSync,
       reload,
       saveConfig,
       syncNative,
@@ -163,7 +228,10 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
 
   return (
     <FamilyDataContext.Provider value={value}>
-      {children}
+      <View style={{ flex: 1 }}>
+        {children}
+        {!ready ? <BootSplash message={bootMessage} /> : null}
+      </View>
     </FamilyDataContext.Provider>
   );
 }

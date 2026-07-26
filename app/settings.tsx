@@ -7,18 +7,22 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  View,
 } from "react-native";
 import { useFamilyData } from "../src/context/FamilyDataContext";
 import { getBuiltInSupabase } from "../src/services/settings";
+import { APP_GROUP } from "../src/config";
 import { colors } from "../src/theme";
 
 export default function SettingsRoute() {
-  const { config, saveConfig } = useFamilyData();
+  const { config, saveConfig, syncNative, lastSync, persons, customEvents } =
+    useFamilyData();
   const builtIn = getBuiltInSupabase();
   const [url, setUrl] = useState(config.supabaseUrl);
   const [anon, setAnon] = useState(config.supabaseAnonKey);
   const [siteName, setSiteName] = useState(config.siteName);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     setUrl(config.supabaseUrl);
@@ -39,6 +43,31 @@ export default function SettingsRoute() {
       Alert.alert("Lỗi", e instanceof Error ? e.message : "Không lưu được");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onSyncWidget = async () => {
+    setSyncing(true);
+    try {
+      const r = await syncNative();
+      if (r.ok) {
+        Alert.alert(
+          "Đã đồng bộ widget",
+          `${r.memberCount} thành viên · ${r.eventCount} sự kiện sắp tới` +
+            (r.eventsPreview?.length
+              ? `\n\nGần nhất: ${r.eventsPreview.join(", ")}`
+              : "\n\n(Không có sự kiện trong ~45–365 ngày — kiểm tra ngày sinh / tab Lịch)") +
+            `\n\nApp Group: ${APP_GROUP}\nGỡ widget cũ rồi thêm lại nếu chưa hiện.`,
+        );
+      } else {
+        Alert.alert(
+          "Đồng bộ thất bại",
+          r.error ||
+            "Kiểm tra Supabase URL/key. Nếu dùng ESign, cert cần hỗ trợ App Group.",
+        );
+      }
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -84,9 +113,39 @@ export default function SettingsRoute() {
         Build-in: {builtIn.supabaseUrl || "(trống)"}
       </Text>
 
+      <View style={styles.syncBox}>
+        <Text style={styles.syncTitle}>Widget & thông báo</Text>
+        <Text style={styles.syncBody}>
+          App: {persons.length} TV · {customEvents.length} sự kiện tùy chỉnh
+          {"\n"}
+          Lần sync:{" "}
+          {lastSync
+            ? lastSync.ok
+              ? `OK · ${lastSync.eventCount} sự kiện`
+              : `Lỗi: ${lastSync.error}`
+            : "chưa"}
+          {"\n"}
+          App Group: {APP_GROUP}
+        </Text>
+        <Pressable
+          style={styles.btnSync}
+          onPress={onSyncWidget}
+          disabled={syncing}
+        >
+          {syncing ? (
+            <ActivityIndicator color={colors.amberDark} />
+          ) : (
+            <Text style={styles.btnSyncText}>Đồng bộ widget ngay</Text>
+          )}
+        </Pressable>
+        <Text style={styles.syncTip}>
+          Sau khi sync: gỡ widget khỏi màn hình chính → thêm lại widget “Gia
+          Phả”. ESign phải giữ App Group {APP_GROUP}.
+        </Text>
+      </View>
+
       <Text style={styles.migration}>
-        Sự kiện âm lịch / một lần: chạy migration{"\n"}
-        docs/migrations/2026-07-25_custom_events_calendar.sql
+        Sự kiện âm lịch / một lần: chạy migration SQL trên Supabase nếu chưa.
       </Text>
 
       <Pressable style={styles.btn} onPress={save} disabled={saving}>
@@ -122,6 +181,37 @@ const styles = StyleSheet.create({
   },
   multi: { minHeight: 88, textAlignVertical: "top" },
   hint: { marginTop: 12, fontSize: 11, color: colors.textSoft },
+  syncBox: {
+    marginTop: 18,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  syncTitle: { fontWeight: "800", color: colors.text, fontSize: 15 },
+  syncBody: {
+    marginTop: 8,
+    fontSize: 12,
+    color: colors.textMuted,
+    lineHeight: 18,
+  },
+  btnSync: {
+    marginTop: 12,
+    borderWidth: 1.5,
+    borderColor: colors.amber,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    backgroundColor: colors.amberSoft,
+  },
+  btnSyncText: { color: colors.amberDark, fontWeight: "800" },
+  syncTip: {
+    marginTop: 10,
+    fontSize: 11,
+    color: colors.textSoft,
+    lineHeight: 16,
+  },
   migration: {
     marginTop: 14,
     padding: 12,

@@ -18,7 +18,7 @@ module.exports = {
   ios: {
     supportsTablet: true,
     bundleIdentifier: bundleId,
-    buildNumber: "1",
+    buildNumber: "2",
     // Điền Team ID từ https://developer.apple.com/account → Membership
     appleTeamId: process.env.IOS_APPLE_TEAM_ID || undefined,
     infoPlist: {
