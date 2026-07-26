@@ -1,20 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-} from "react-native-reanimated";
 import { getChildren, getSpouses, pickDefaultRootId } from "../domain/treeRoot";
 import type { Person, Relationship } from "../types";
-import { colors } from "../theme";
-import PersonCard from "./PersonCard";
+import { colors, genderBg, genderColor } from "../theme";
 
 type Props = {
   persons: Person[];
@@ -22,90 +17,157 @@ type Props = {
   onPressPerson: (p: Person) => void;
 };
 
-function TreeNode({
+type TreeFilters = {
+  hideSpouses: boolean;
+  hideMales: boolean;
+  hideFemales: boolean;
+};
+
+function filterPeople(
+  list: Person[],
+  filters: TreeFilters,
+): Person[] {
+  return list.filter((p) => {
+    if (filters.hideMales && p.gender === "male") return false;
+    if (filters.hideFemales && p.gender === "female") return false;
+    return true;
+  });
+}
+
+function TreeBranch({
   person,
   personsMap,
   relationships,
-  visited,
+  depth,
+  expanded,
+  toggle,
+  filters,
   onPressPerson,
-  hideSpouses,
-  hideMales,
-  hideFemales,
+  visited,
 }: {
   person: Person;
   personsMap: Map<string, Person>;
   relationships: Relationship[];
-  visited: Set<string>;
+  depth: number;
+  expanded: Set<string>;
+  toggle: (id: string) => void;
+  filters: TreeFilters;
   onPressPerson: (p: Person) => void;
-  hideSpouses: boolean;
-  hideMales: boolean;
-  hideFemales: boolean;
+  visited: Set<string>;
 }) {
   if (visited.has(person.id)) return null;
-  const nextVisited = new Set(visited);
-  nextVisited.add(person.id);
+  const next = new Set(visited);
+  next.add(person.id);
 
-  let spouses = hideSpouses
-    ? []
-    : getSpouses(person.id, relationships, personsMap);
   let children = getChildren(person.id, relationships, personsMap);
+  children = filterPeople(children, filters);
 
-  if (hideMales) {
-    spouses = spouses.filter((s) => s.gender !== "male");
-    children = children.filter((c) => c.gender !== "male");
-  }
-  if (hideFemales) {
-    spouses = spouses.filter((s) => s.gender !== "female");
-    children = children.filter((c) => c.gender !== "female");
-  }
+  let spouses = filters.hideSpouses
+    ? []
+    : filterPeople(getSpouses(person.id, relationships, personsMap), filters);
+
+  const isOpen = expanded.has(person.id);
+  const hasKids = children.length > 0;
+  const indent = Math.min(depth, 8) * 14;
 
   return (
-    <View style={styles.node}>
-      <View style={styles.couple}>
-        <View style={styles.nodeCard}>
-          <PersonCard
-            person={person}
-            compact
-            onPress={() => onPressPerson(person)}
-          />
-        </View>
-        {spouses.map((s) => (
-          <View key={s.id} style={styles.nodeCard}>
-            <PersonCard
-              person={s}
-              compact
-              role={s.gender === "male" ? "Chồng" : "Vợ"}
-              onPress={() => onPressPerson(s)}
-            />
+    <View>
+      <View style={[styles.row, { paddingLeft: 8 + indent }]}>
+        {hasKids ? (
+          <Pressable
+            style={styles.expandBtn}
+            onPress={() => toggle(person.id)}
+            hitSlop={8}
+          >
+            <Text style={styles.expandIcon}>{isOpen ? "▼" : "▶"}</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.expandPlaceholder} />
+        )}
+
+        <Pressable
+          style={[styles.node, { borderColor: genderColor(person.gender) }]}
+          onPress={() => onPressPerson(person)}
+        >
+          <View
+            style={[styles.dot, { backgroundColor: genderBg(person.gender) }]}
+          >
+            <Text style={[styles.dotText, { color: genderColor(person.gender) }]}>
+              {person.full_name.charAt(0)}
+            </Text>
           </View>
-        ))}
+          <View style={styles.nodeBody}>
+            <Text style={styles.name} numberOfLines={1}>
+              {person.full_name}
+            </Text>
+            <Text style={styles.meta} numberOfLines={1}>
+              {person.generation != null ? `Đời ${person.generation}` : ""}
+              {person.birth_year ? ` · ${person.birth_year}` : ""}
+              {person.is_deceased ? " · †" : ""}
+              {person.is_in_law ? " · dâu/rể" : ""}
+            </Text>
+          </View>
+          {hasKids ? (
+            <Text style={styles.kidCount}>{children.length}</Text>
+          ) : null}
+        </Pressable>
       </View>
-      {children.length > 0 && (
-        <View style={styles.children}>
-          <View style={styles.vline} />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <View style={styles.childRow}>
-              {children.map((c) => (
-                <View key={c.id} style={styles.childWrap}>
-                  <View style={styles.childStem} />
-                  <TreeNode
-                    person={c}
-                    personsMap={personsMap}
-                    relationships={relationships}
-                    visited={nextVisited}
-                    onPressPerson={onPressPerson}
-                    hideSpouses={hideSpouses}
-                    hideMales={hideMales}
-                    hideFemales={hideFemales}
-                  />
-                </View>
-              ))}
-            </View>
-          </ScrollView>
+
+      {spouses.length > 0 && (
+        <View style={[styles.spouseRow, { paddingLeft: 36 + indent }]}>
+          {spouses.map((s) => (
+            <Pressable
+              key={s.id}
+              style={[styles.spouseChip, { borderColor: genderColor(s.gender) }]}
+              onPress={() => onPressPerson(s)}
+            >
+              <Text style={styles.spouseText} numberOfLines={1}>
+                {s.gender === "male" ? "♂ " : s.gender === "female" ? "♀ " : ""}
+                {s.full_name}
+              </Text>
+            </Pressable>
+          ))}
         </View>
       )}
+
+      {isOpen &&
+        children.map((c) => (
+          <TreeBranch
+            key={c.id}
+            person={c}
+            personsMap={personsMap}
+            relationships={relationships}
+            depth={depth + 1}
+            expanded={expanded}
+            toggle={toggle}
+            filters={filters}
+            onPressPerson={onPressPerson}
+            visited={next}
+          />
+        ))}
     </View>
   );
+}
+
+/** Collect all descendant ids from root (for expand-all). */
+function collectDescendantIds(
+  rootId: string,
+  relationships: Relationship[],
+  personsMap: Map<string, Person>,
+): string[] {
+  const ids: string[] = [];
+  const stack = [rootId];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+    for (const c of getChildren(id, relationships, personsMap)) {
+      stack.push(c.id);
+    }
+  }
+  return ids;
 }
 
 export default function FamilyTreeView({
@@ -113,70 +175,68 @@ export default function FamilyTreeView({
   relationships,
   onPressPerson,
 }: Props) {
-  const [rootId, setRootId] = useState<string | null>(null);
-  const [hideSpouses, setHideSpouses] = useState(false);
-  const [hideMales, setHideMales] = useState(false);
-  const [hideFemales, setHideFemales] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-
-  const scale = useSharedValue(1);
-  const savedScale = useSharedValue(1);
-  const tx = useSharedValue(0);
-  const ty = useSharedValue(0);
-  const savedTx = useSharedValue(0);
-  const savedTy = useSharedValue(0);
-
   const personsMap = useMemo(
     () => new Map(persons.map((p) => [p.id, p])),
     [persons],
   );
 
-  const effectiveRoot =
-    rootId && personsMap.has(rootId)
-      ? rootId
-      : pickDefaultRootId(persons, relationships, rootId);
+  const defaultRoot = useMemo(
+    () => pickDefaultRootId(persons, relationships),
+    [persons, relationships],
+  );
 
+  const [rootId, setRootId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [showPicker, setShowPicker] = useState(false);
+  const [hideSpouses, setHideSpouses] = useState(false);
+  const [hideMales, setHideMales] = useState(false);
+  const [hideFemales, setHideFemales] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const effectiveRoot =
+    rootId && personsMap.has(rootId) ? rootId : defaultRoot;
   const rootPerson = effectiveRoot ? personsMap.get(effectiveRoot) : null;
 
-  const roots = useMemo(() => {
-    const childIds = new Set(
-      relationships
-        .filter(
-          (r) => r.type === "biological_child" || r.type === "adopted_child",
-        )
-        .map((r) => r.person_b),
-    );
+  // When root changes, expand root + first level only
+  useEffect(() => {
+    if (!effectiveRoot) return;
+    const next = new Set<string>([effectiveRoot]);
+    for (const c of getChildren(effectiveRoot, relationships, personsMap)) {
+      next.add(c.id);
+    }
+    setExpanded(next);
+  }, [effectiveRoot, relationships, personsMap]);
+
+  const filters: TreeFilters = { hideSpouses, hideMales, hideFemales };
+
+  const searchHits = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return persons.slice(0, 30);
     return persons
-      .filter((p) => !childIds.has(p.id) && !p.is_in_law)
-      .sort((a, b) => a.full_name.localeCompare(b.full_name, "vi"));
-  }, [persons, relationships]);
+      .filter((p) => p.full_name.toLowerCase().includes(term))
+      .slice(0, 40);
+  }, [persons, search]);
 
-  const pinch = Gesture.Pinch()
-    .onUpdate((e) => {
-      scale.value = Math.min(3, Math.max(0.4, savedScale.value * e.scale));
-    })
-    .onEnd(() => {
-      savedScale.value = scale.value;
+  const toggle = (id: string) => {
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
     });
+  };
 
-  const pan = Gesture.Pan()
-    .onUpdate((e) => {
-      tx.value = savedTx.value + e.translationX;
-      ty.value = savedTy.value + e.translationY;
-    })
-    .onEnd(() => {
-      savedTx.value = tx.value;
-      savedTy.value = ty.value;
-    });
+  const expandAll = () => {
+    if (!effectiveRoot) return;
+    setExpanded(
+      new Set(collectDescendantIds(effectiveRoot, relationships, personsMap)),
+    );
+  };
 
-  const composed = Gesture.Simultaneous(pinch, pan);
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: tx.value },
-      { translateY: ty.value },
-      { scale: scale.value },
-    ],
-  }));
+  const collapseAll = () => {
+    if (!effectiveRoot) return;
+    setExpanded(new Set([effectiveRoot]));
+  };
 
   if (!rootPerson) {
     return (
@@ -188,146 +248,276 @@ export default function FamilyTreeView({
 
   return (
     <View style={styles.root}>
+      {/* Root / person filter */}
       <View style={styles.toolbar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.rootRow}>
-            <Text style={styles.rootLabel}>Gốc:</Text>
-            {(roots.length ? roots : persons).slice(0, 40).map((p) => (
+        <Text style={styles.toolbarLabel}>Xem từ</Text>
+        <Pressable
+          style={styles.rootSelect}
+          onPress={() => setShowPicker((v) => !v)}
+        >
+          <Text style={styles.rootSelectText} numberOfLines={1}>
+            {rootPerson.full_name}
+          </Text>
+          <Text style={styles.chev}>{showPicker ? "▲" : "▼"}</Text>
+        </Pressable>
+      </View>
+
+      {showPicker && (
+        <View style={styles.picker}>
+          <TextInput
+            style={styles.search}
+            placeholder="Tìm người để xem nhánh con cháu…"
+            placeholderTextColor={colors.textSoft}
+            value={search}
+            onChangeText={setSearch}
+            autoFocus
+          />
+          <ScrollView style={styles.pickerList} keyboardShouldPersistTaps="handled">
+            {searchHits.map((p) => (
               <Pressable
                 key={p.id}
                 style={[
-                  styles.rootChip,
-                  effectiveRoot === p.id && styles.rootChipOn,
+                  styles.pickerItem,
+                  p.id === effectiveRoot && styles.pickerItemOn,
                 ]}
-                onPress={() => setRootId(p.id)}
+                onPress={() => {
+                  setRootId(p.id);
+                  setShowPicker(false);
+                  setSearch("");
+                }}
               >
                 <Text
                   style={[
-                    styles.rootChipText,
-                    effectiveRoot === p.id && styles.rootChipTextOn,
+                    styles.pickerName,
+                    p.id === effectiveRoot && styles.pickerNameOn,
                   ]}
                   numberOfLines={1}
                 >
                   {p.full_name}
+                  {p.generation != null ? ` · Đời ${p.generation}` : ""}
                 </Text>
               </Pressable>
             ))}
-          </View>
-        </ScrollView>
-        <Pressable
-          style={styles.filterBtn}
-          onPress={() => setShowFilters((v) => !v)}
-        >
-          <Text style={styles.filterBtnText}>Lọc</Text>
-        </Pressable>
-      </View>
-
-      {showFilters && (
-        <View style={styles.filters}>
-          {(
-            [
-              ["hideSpouses", "Ẩn vợ/chồng", hideSpouses, setHideSpouses],
-              ["hideMales", "Ẩn nam", hideMales, setHideMales],
-              ["hideFemales", "Ẩn nữ", hideFemales, setHideFemales],
-            ] as const
-          ).map(([key, label, val, set]) => (
-            <Pressable
-              key={key}
-              style={[styles.chip, val && styles.chipOn]}
-              onPress={() => set(!val)}
-            >
-              <Text style={[styles.chipText, val && styles.chipTextOn]}>
-                {label}
-              </Text>
-            </Pressable>
-          ))}
+          </ScrollView>
         </View>
       )}
 
-      <GestureDetector gesture={composed}>
-        <Animated.View style={[styles.canvas, animStyle]}>
-          <TreeNode
+      {/* Display filters + expand */}
+      <View style={styles.chipRow}>
+        {(
+          [
+            ["spouses", "Ẩn vợ/chồng", hideSpouses, () => setHideSpouses((v) => !v)],
+            ["m", "Ẩn nam", hideMales, () => setHideMales((v) => !v)],
+            ["f", "Ẩn nữ", hideFemales, () => setHideFemales((v) => !v)],
+          ] as const
+        ).map(([k, label, on, fn]) => (
+          <Pressable
+            key={k}
+            style={[styles.chip, on && styles.chipOn]}
+            onPress={fn}
+          >
+            <Text style={[styles.chipText, on && styles.chipTextOn]}>{label}</Text>
+          </Pressable>
+        ))}
+        <Pressable style={styles.chip} onPress={expandAll}>
+          <Text style={styles.chipText}>Mở hết</Text>
+        </Pressable>
+        <Pressable style={styles.chip} onPress={collapseAll}>
+          <Text style={styles.chipText}>Thu gọn</Text>
+        </Pressable>
+      </View>
+
+      <Text style={styles.hint}>
+        Chạm ▶/▼ để mở nhánh · chạm tên để xem chi tiết · chọn “Xem từ” để lọc
+        theo một người
+      </Text>
+
+      {/* Fixed frame — cannot drag outside tab area */}
+      <View style={styles.frame}>
+        <ScrollView
+          style={styles.frameScroll}
+          contentContainerStyle={styles.frameContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
+        >
+          <TreeBranch
             person={rootPerson}
             personsMap={personsMap}
             relationships={relationships}
-            visited={new Set()}
+            depth={0}
+            expanded={expanded}
+            toggle={toggle}
+            filters={filters}
             onPressPerson={onPressPerson}
-            hideSpouses={hideSpouses}
-            hideMales={hideMales}
-            hideFemales={hideFemales}
+            visited={new Set()}
           />
-        </Animated.View>
-      </GestureDetector>
-      <Text style={styles.hint}>Pinch để zoom · kéo để di chuyển</Text>
+        </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  root: { flex: 1, minHeight: 0 },
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+  emptyText: { color: colors.textMuted },
   toolbar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
     gap: 8,
+    paddingHorizontal: 12,
     marginBottom: 6,
   },
-  rootRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 8 },
-  rootLabel: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
-  rootChip: {
-    maxWidth: 120,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
+  toolbarLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: colors.textMuted,
+  },
+  rootSelect: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: colors.white,
     borderWidth: 1,
-    borderColor: colors.border,
-  },
-  rootChipOn: { backgroundColor: colors.amberSoft, borderColor: colors.amber },
-  rootChipText: { fontSize: 11, fontWeight: "600", color: colors.textMuted },
-  rootChipTextOn: { color: colors.amberDark },
-  filterBtn: {
+    borderColor: colors.amber,
+    borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  rootSelectText: {
+    flex: 1,
+    fontWeight: "800",
+    color: colors.amberDark,
+    fontSize: 14,
+  },
+  chev: { fontSize: 10, color: colors.amberDark },
+  picker: {
+    marginHorizontal: 12,
+    marginBottom: 8,
     backgroundColor: colors.white,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
+    maxHeight: 200,
+    overflow: "hidden",
   },
-  filterBtnText: { fontSize: 12, fontWeight: "700", color: colors.text },
-  filters: {
+  search: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: colors.text,
+    fontSize: 14,
+  },
+  pickerList: { maxHeight: 150 },
+  pickerItem: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  pickerItemOn: { backgroundColor: colors.amberSoft },
+  pickerName: { fontSize: 13, fontWeight: "600", color: colors.text },
+  pickerNameOn: { color: colors.amberDark, fontWeight: "800" },
+  chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 6,
     paddingHorizontal: 12,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 999,
+    borderRadius: 8,
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
   },
   chipOn: { backgroundColor: colors.amberSoft, borderColor: colors.amber },
-  chipText: { fontSize: 11, fontWeight: "600", color: colors.textMuted },
+  chipText: { fontSize: 11, fontWeight: "700", color: colors.textMuted },
   chipTextOn: { color: colors.amberDark },
-  canvas: { padding: 16, minWidth: "100%" },
-  node: { alignItems: "center" },
-  couple: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 4 },
-  nodeCard: { width: 200 },
-  children: { alignItems: "center", marginTop: 4 },
-  vline: { width: 2, height: 16, backgroundColor: colors.border },
-  childRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingTop: 4 },
-  childWrap: { alignItems: "center" },
-  childStem: { width: 2, height: 12, backgroundColor: colors.border, marginBottom: 2 },
-  empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
-  emptyText: { color: colors.textMuted },
   hint: {
-    textAlign: "center",
     fontSize: 10,
     color: colors.textSoft,
-    paddingBottom: 8,
+    paddingHorizontal: 14,
+    marginBottom: 6,
   },
+  frame: {
+    flex: 1,
+    minHeight: 0,
+    marginHorizontal: 12,
+    marginBottom: 8,
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: "hidden",
+  },
+  frameScroll: { flex: 1 },
+  frameContent: { paddingVertical: 10, paddingBottom: 24 },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 4,
+    paddingRight: 8,
+  },
+  expandBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  expandPlaceholder: { width: 28 },
+  expandIcon: { fontSize: 10, color: colors.amberDark, fontWeight: "800" },
+  node: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.stone100,
+    borderRadius: 12,
+    borderLeftWidth: 3,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 0,
+  },
+  dot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dotText: { fontWeight: "800", fontSize: 13 },
+  nodeBody: { flex: 1, minWidth: 0 },
+  name: { fontWeight: "800", fontSize: 13, color: colors.text },
+  meta: { fontSize: 10, color: colors.textMuted, marginTop: 1 },
+  kidCount: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: colors.amberDark,
+    backgroundColor: colors.amberSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  spouseRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginBottom: 6,
+    paddingRight: 8,
+  },
+  spouseChip: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: colors.white,
+    maxWidth: 160,
+  },
+  spouseText: { fontSize: 11, fontWeight: "600", color: colors.textMuted },
 });

@@ -200,9 +200,12 @@ struct MediumWidgetView: View {
             }
 
             if entry.events.isEmpty {
-                Text("Không có sự kiện trong 30 ngày tới")
+                Text("Không có sự kiện trong 7 ngày tới")
                     .font(.caption)
                     .foregroundColor(Color(red: 0.47, green: 0.44, blue: 0.42))
+                Text("Mở app Gia Phả để đồng bộ widget")
+                    .font(.caption2)
+                    .foregroundColor(Color(red: 0.66, green: 0.64, blue: 0.62))
                 Spacer()
             } else {
                 ForEach(entry.events.prefix(3)) { event in

@@ -21,11 +21,23 @@ import {
   insertCustomEvent,
   updateCustomEvent,
 } from "../../src/services/supabaseData";
-import type {
-  CustomEventInsert,
-  FamilyEventItem,
-} from "../../src/types";
+import type { CustomEventInsert, FamilyEventItem } from "../../src/types";
 import { colors } from "../../src/theme";
+
+const MONTH_LABELS = [
+  "T1",
+  "T2",
+  "T3",
+  "T4",
+  "T5",
+  "T6",
+  "T7",
+  "T8",
+  "T9",
+  "T10",
+  "T11",
+  "T12",
+];
 
 export default function EventsTab() {
   const {
@@ -60,6 +72,15 @@ export default function EventsTab() {
     [all, month],
   );
 
+  const countsByMonth = useMemo(() => {
+    const c = Array.from({ length: 13 }, () => 0);
+    for (const e of all) {
+      const [, m] = e.date.split("-").map(Number);
+      if (m >= 1 && m <= 12) c[m] += 1;
+    }
+    return c;
+  }, [all]);
+
   const onRefreshLocal = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -77,12 +98,17 @@ export default function EventsTab() {
 
   const onEditSave = async (row: CustomEventInsert) => {
     if (!editing || editing.type !== "custom") return;
-    const updated = await updateCustomEvent(config, editing.id, row);
-    setCustomEvents(
-      customEvents.map((c) => (c.id === updated.id ? updated : c)),
-    );
-    setEditing(null);
-    await syncNative();
+    try {
+      const updated = await updateCustomEvent(config, editing.id, row);
+      setCustomEvents(
+        customEvents.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)),
+      );
+      setEditing(null);
+      await syncNative();
+    } catch (e) {
+      Alert.alert("Lỗi", e instanceof Error ? e.message : "Không sửa được");
+      throw e;
+    }
   };
 
   const editingSource = editing
@@ -135,23 +161,30 @@ export default function EventsTab() {
         </View>
       </View>
 
-      <FlatList
-        horizontal
-        data={Array.from({ length: 12 }, (_, i) => i + 1)}
-        keyExtractor={(m) => String(m)}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.months}
-        renderItem={({ item: m }) => (
-          <Pressable
-            onPress={() => setMonth(m)}
-            style={[styles.monthChip, month === m && styles.monthChipOn]}
-          >
-            <Text style={[styles.monthText, month === m && styles.monthTextOn]}>
-              Thg {m}
-            </Text>
-          </Pressable>
-        )}
-      />
+      {/* Month grid 4×3 — not vertical pills */}
+      <View style={styles.monthGrid}>
+        {MONTH_LABELS.map((label, i) => {
+          const m = i + 1;
+          const active = month === m;
+          const count = countsByMonth[m];
+          return (
+            <Pressable
+              key={m}
+              onPress={() => setMonth(m)}
+              style={[styles.monthCell, active && styles.monthCellOn]}
+            >
+              <Text style={[styles.monthLabel, active && styles.monthLabelOn]}>
+                {label}
+              </Text>
+              {count > 0 ? (
+                <Text style={[styles.monthCount, active && styles.monthCountOn]}>
+                  {count}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -160,10 +193,19 @@ export default function EventsTab() {
         keyExtractor={(e) => `${e.id}-${e.date}`}
         contentContainerStyle={styles.list}
         refreshControl={
-          <RefreshControl refreshing={refreshing || loading} onRefresh={onRefreshLocal} />
+          <RefreshControl
+            refreshing={refreshing || loading}
+            onRefresh={onRefreshLocal}
+          />
         }
         ListEmptyComponent={
           <Text style={styles.empty}>Không có sự kiện tháng này.</Text>
+        }
+        ListHeaderComponent={
+          <Text style={styles.listHint}>
+            Sự kiện tùy chỉnh: bấm Sửa / Xóa. Sinh nhật & giỗ tự động từ thành
+            viên.
+          </Text>
         }
         renderItem={({ item }) => {
           const isToday = item.daysUntil === 0;
@@ -175,13 +217,7 @@ export default function EventsTab() {
                 ? colors.rose
                 : colors.emerald;
           return (
-            <Pressable
-              onPress={() => {
-                if (item.type === "custom") setEditing(item);
-              }}
-              onLongPress={() => item.type === "custom" && onDelete(item)}
-              style={[styles.card, isToday && styles.cardToday]}
-            >
+            <View style={[styles.card, isToday && styles.cardToday]}>
               <View style={[styles.icon, { backgroundColor: `${tone}18` }]}>
                 <Text style={{ fontSize: 18 }}>
                   {item.type === "birthday"
@@ -199,6 +235,22 @@ export default function EventsTab() {
                   {eventTypeLabel(item.type)} · {item.eventDateLabel}
                   {item.isRecurring === false ? " · 1 lần" : ""}
                 </Text>
+                {item.type === "custom" && (
+                  <View style={styles.actions}>
+                    <Pressable
+                      style={styles.actionBtn}
+                      onPress={() => setEditing(item)}
+                    >
+                      <Text style={styles.actionEdit}>Sửa</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.actionBtn}
+                      onPress={() => onDelete(item)}
+                    >
+                      <Text style={styles.actionDel}>Xóa</Text>
+                    </Pressable>
+                  </View>
+                )}
               </View>
               <View
                 style={[
@@ -216,7 +268,7 @@ export default function EventsTab() {
                   {daysUntilLabel(item.daysUntil)}
                 </Text>
               </View>
-            </Pressable>
+            </View>
           );
         }}
       />
@@ -269,29 +321,67 @@ const styles = StyleSheet.create({
   h1: { fontSize: 22, fontWeight: "800", color: colors.text },
   yearRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   yearBtn: { fontSize: 28, color: colors.amberDark, fontWeight: "300" },
-  year: { fontSize: 18, fontWeight: "800", color: colors.text, minWidth: 56, textAlign: "center" },
-  months: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
-  monthChip: {
+  year: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.text,
+    minWidth: 56,
+    textAlign: "center",
+  },
+  monthGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingTop: 10,
+    paddingBottom: 4,
+    gap: 6,
+  },
+  monthCell: {
+    width: "23%",
+    flexGrow: 1,
+    minWidth: "22%",
+    maxWidth: "24.5%",
+    aspectRatio: 1.6,
+    borderRadius: 10,
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
-    marginRight: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 6,
   },
-  monthChipOn: { backgroundColor: colors.amberSoft, borderColor: colors.amber },
-  monthText: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
-  monthTextOn: { color: colors.amberDark },
+  monthCellOn: {
+    backgroundColor: colors.amber,
+    borderColor: colors.amberDark,
+  },
+  monthLabel: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: colors.text,
+  },
+  monthLabelOn: { color: colors.white },
+  monthCount: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: colors.textSoft,
+    marginTop: 2,
+  },
+  monthCountOn: { color: colors.amberSoft },
   list: { paddingHorizontal: 12, paddingBottom: 100 },
+  listHint: {
+    fontSize: 11,
+    color: colors.textSoft,
+    marginBottom: 8,
+    lineHeight: 16,
+  },
   empty: { textAlign: "center", color: colors.textMuted, marginTop: 40 },
   error: { color: colors.danger, paddingHorizontal: 16, marginBottom: 8 },
   card: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 10,
     backgroundColor: colors.white,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 12,
@@ -301,18 +391,23 @@ const styles = StyleSheet.create({
   icon: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  cardBody: { flex: 1 },
+  cardBody: { flex: 1, minWidth: 0 },
   cardTitle: { fontWeight: "700", color: colors.text, fontSize: 14 },
   cardMeta: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  actions: { flexDirection: "row", gap: 12, marginTop: 8 },
+  actionBtn: { paddingVertical: 2 },
+  actionEdit: { color: colors.amberDark, fontWeight: "800", fontSize: 12 },
+  actionDel: { color: colors.danger, fontWeight: "800", fontSize: 12 },
   badge: {
     backgroundColor: colors.stone100,
-    borderRadius: 999,
+    borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
+    marginTop: 2,
   },
   badgeToday: { backgroundColor: colors.amber },
   badgeSoon: { backgroundColor: colors.amberSoft },
@@ -330,5 +425,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     elevation: 4,
   },
-  fabText: { color: colors.white, fontSize: 28, fontWeight: "300", marginTop: -2 },
+  fabText: {
+    color: colors.white,
+    fontSize: 28,
+    fontWeight: "300",
+    marginTop: -2,
+  },
 });

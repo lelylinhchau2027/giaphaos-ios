@@ -15,12 +15,14 @@ Notifications.setNotificationHandler({
 
 export async function ensureNotificationPermissions(): Promise<boolean> {
   if (!Device.isDevice) {
-    // Simulator vẫn cho phép local notifications trên một số bản iOS
     console.warn("Không phải thiết bị thật — thông báo có thể hạn chế.");
   }
 
   const current = await Notifications.getPermissionsAsync();
-  if (current.granted || current.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) {
+  if (
+    current.granted ||
+    current.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
+  ) {
     return true;
   }
 
@@ -43,7 +45,7 @@ export async function setupAndroidChannel() {
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("family-events", {
       name: "Sự kiện gia đình",
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: Notifications.AndroidImportance.DEFAULT,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#D97706",
     });
@@ -51,8 +53,8 @@ export async function setupAndroidChannel() {
 }
 
 /**
- * Lên lịch local notification cho sự kiện trong 7 ngày tới.
- * Huỷ lịch cũ của app trước khi set lại (tránh trùng).
+ * Chỉ 1 thông báo mỗi ngày lúc 21:00.
+ * Nội dung: tóm tắt sự kiện của ngày hôm sau (trong cửa sổ withinDays).
  */
 export async function scheduleEventNotifications(
   events: FamilyEventItem[],
@@ -62,70 +64,57 @@ export async function scheduleEventNotifications(
   if (!ok) return { scheduled: 0, skipped: true as const };
 
   await setupAndroidChannel();
-
-  // Xoá toàn bộ lịch local do app tạo
   await Notifications.cancelAllScheduledNotificationsAsync();
 
-  const upcoming = events.filter((e) => e.daysUntil >= 0 && e.daysUntil <= withinDays);
-  let scheduled = 0;
+  const upcoming = events.filter(
+    (e) => e.daysUntil >= 0 && e.daysUntil <= withinDays,
+  );
 
-  for (const event of upcoming) {
-    // Báo lúc 8:00 sáng ngày sự kiện
-    const [y, m, d] = event.date.split("-").map(Number);
-    const fireAt = new Date(y, m - 1, d, 8, 0, 0);
-    if (fireAt.getTime() <= Date.now()) {
-      // Hôm nay mà đã qua 8h → báo sau 10 giây (nhắc nhẹ)
-      if (event.daysUntil === 0) {
-        fireAt.setTime(Date.now() + 10_000);
-      } else {
-        continue;
-      }
-    }
-
-    const typeLabel = eventTypeLabel(event.type);
-    const when =
-      event.daysUntil === 0
-        ? "hôm nay"
-        : event.daysUntil === 1
-          ? "ngày mai"
-          : `trong ${event.daysUntil} ngày`;
-
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: `${typeLabel}: ${event.personName}`,
-        body: `${typeLabel} ${when} (${event.eventDateLabel}). Chạm để mở Gia Phả.`,
-        data: {
-          eventId: event.id,
-          personId: event.personId ?? null,
-          url: "/dashboard/events",
-        },
-        sound: true,
-        ...(Platform.OS === "android" ? { channelId: "family-events" } : {}),
-      },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: fireAt,
-      },
-    });
-    scheduled += 1;
+  // Group events by calendar day (ISO date)
+  const byDate = new Map<string, FamilyEventItem[]>();
+  for (const e of upcoming) {
+    const list = byDate.get(e.date) || [];
+    list.push(e);
+    byDate.set(e.date, list);
   }
 
-  // Nhắc sớm: 1 ngày trước (18:00) nếu còn trong cửa sổ
-  for (const event of upcoming.filter((e) => e.daysUntil >= 1 && e.daysUntil <= withinDays)) {
-    const [y, m, d] = event.date.split("-").map(Number);
-    const fireAt = new Date(y, m - 1, d, 18, 0, 0);
-    fireAt.setDate(fireAt.getDate() - 1);
-    if (fireAt.getTime() <= Date.now()) continue;
+  let scheduled = 0;
+  const now = Date.now();
+
+  for (const [isoDate, dayEvents] of byDate) {
+    // Notify at 21:00 the evening BEFORE the event day
+    // (remind about tomorrow). For "today" events that already passed 21:00 yesterday,
+    // skip — user already missed evening reminder.
+    const [y, m, d] = isoDate.split("-").map(Number);
+    const eventDay = new Date(y, m - 1, d);
+    const fireAt = new Date(y, m - 1, d, 21, 0, 0);
+    fireAt.setDate(fireAt.getDate() - 1); // 21:00 day before
+
+    // If reminder time already passed, skip (no flood of immediate notifs)
+    if (fireAt.getTime() <= now) continue;
+
+    // Also skip if event is more than withinDays away from today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysOut = Math.round(
+      (eventDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    if (daysOut < 1 || daysOut > withinDays) continue;
+
+    const names = dayEvents
+      .slice(0, 4)
+      .map((e) => `${eventTypeLabel(e.type)}: ${e.personName}`)
+      .join(" · ");
+    const more =
+      dayEvents.length > 4 ? ` và ${dayEvents.length - 4} sự kiện khác` : "";
+    const whenLabel =
+      daysOut === 1 ? "Ngày mai" : `${d.toString().padStart(2, "0")}/${m.toString().padStart(2, "0")}`;
 
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: `Ngày mai: ${event.personName}`,
-        body: `${eventTypeLabel(event.type)} ngày mai (${event.eventDateLabel}).`,
-        data: {
-          eventId: event.id,
-          personId: event.personId ?? null,
-          url: "/dashboard/events",
-        },
+        title: `Gia Phả · ${whenLabel} (${dayEvents.length} sự kiện)`,
+        body: names + more,
+        data: { url: "/events", date: isoDate },
         sound: true,
         ...(Platform.OS === "android" ? { channelId: "family-events" } : {}),
       },

@@ -239,19 +239,52 @@ export async function updateCustomEvent(
 ): Promise<CustomEventRow> {
   const sb = getSupabase(cfg);
   if (!sb) throw new Error("Chưa cấu hình Supabase");
-  const { data, error } = await sb
+
+  const fullBody = {
+    title: row.title,
+    event_day: row.event_day,
+    event_month: row.event_month,
+    event_year: row.event_year ?? null,
+    calendar_type: row.calendar_type,
+    is_recurring: row.is_recurring,
+  };
+
+  let { data, error } = await sb
     .from("custom_events")
-    .update({
-      title: row.title,
-      event_day: row.event_day,
-      event_month: row.event_month,
-      event_year: row.event_year ?? null,
+    .update(fullBody)
+    .eq("id", id)
+    .select(
+      "id,title,event_day,event_month,event_year,calendar_type,is_recurring",
+    )
+    .single();
+
+  // DB chưa chạy migration → bỏ calendar_type / is_recurring
+  if (
+    error &&
+    (error.message.includes("calendar_type") ||
+      error.message.includes("is_recurring") ||
+      error.code === "42703" ||
+      error.message.includes("column"))
+  ) {
+    const legacy = await sb
+      .from("custom_events")
+      .update({
+        title: row.title,
+        event_day: row.event_day,
+        event_month: row.event_month,
+        event_year: row.event_year ?? null,
+      })
+      .eq("id", id)
+      .select("id,title,event_day,event_month,event_year")
+      .single();
+    if (legacy.error) throw new Error(legacy.error.message);
+    return {
+      ...(legacy.data as CustomEventRow),
       calendar_type: row.calendar_type,
       is_recurring: row.is_recurring,
-    })
-    .eq("id", id)
-    .select("id,title,event_day,event_month,event_year,calendar_type,is_recurring")
-    .single();
+    };
+  }
+
   if (error) throw new Error(error.message);
   return data as CustomEventRow;
 }

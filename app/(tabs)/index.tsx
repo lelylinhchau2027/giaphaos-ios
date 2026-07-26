@@ -71,8 +71,7 @@ export default function DashboardScreen() {
           persons={persons}
           loading={loading}
           onRefresh={reload}
-          canEdit={canEdit}
-          onAdd={() => router.push("/member/new")}
+          canEdit={false}
           onPressPerson={(p) => router.push(`/member/${p.id}`)}
         />
       )}

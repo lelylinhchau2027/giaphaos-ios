@@ -45,16 +45,29 @@ export async function syncWidgetAndNotifications(): Promise<{
     }
 
     const { persons, customEvents } = await fetchFamilyData(cfg);
-    const events = computeUpcomingEvents(persons, customEvents, 30);
+    // Widget + notif: 7 ngày gần nhất
+    const events = computeUpcomingEvents(persons, customEvents, 7);
+
+    // Only fields Swift WidgetEvent decodes (avoid surprise decode failures)
+    const widgetEvents = events.slice(0, 8).map((e) => ({
+      id: e.id,
+      personId: e.personId ?? null,
+      personName: e.personName,
+      type: e.type,
+      date: e.date,
+      eventDateLabel: e.eventDateLabel,
+      daysUntil: e.daysUntil,
+      originYear: e.originYear,
+    }));
 
     const payload: WidgetPayload = {
       updatedAt: new Date().toISOString(),
       memberCount: persons.length,
-      events: events.slice(0, 12),
+      events: widgetEvents as WidgetPayload["events"],
       siteName: cfg.siteName,
     };
     writeWidgetPayload(payload);
-    await scheduleEventNotifications(events).catch(() => undefined);
+    await scheduleEventNotifications(events, 7).catch(() => undefined);
 
     return {
       ok: true,
