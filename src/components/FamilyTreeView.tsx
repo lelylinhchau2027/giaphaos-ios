@@ -5,6 +5,9 @@ import {
   StyleSheet,
   Text,
   View,
+  TextInput,
+  Modal,
+  FlatList,
 } from "react-native";
 import { Image } from "expo-image";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -223,6 +226,8 @@ export default function FamilyTreeView({
   const [hideMales, setHideMales] = useState(false);
   const [hideFemales, setHideFemales] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [searchModalVisible, setSearchModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -255,6 +260,13 @@ export default function FamilyTreeView({
       .filter((p) => !childIds.has(p.id) && !p.is_in_law)
       .sort((a, b) => a.full_name.localeCompare(b.full_name, "vi"));
   }, [persons, relationships]);
+
+  const filteredRoots = useMemo(() => {
+    if (!searchQuery) return roots;
+    return roots.filter((p) =>
+      p.full_name.toLowerCase().includes(searchQuery.toLowerCase()),
+    );
+  }, [roots, searchQuery]);
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -311,36 +323,17 @@ export default function FamilyTreeView({
 
   return (
     <View style={styles.root}>
-      {/* Root picker */}
+      {/* Root picker & Filter */}
       <View style={styles.toolbar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.rootRow}>
-            <Text style={styles.rootLabel}>Gốc:</Text>
-            {(roots.length ? roots : persons).slice(0, 40).map((p) => (
-              <Pressable
-                key={p.id}
-                style={[
-                  styles.rootChip,
-                  effectiveRoot === p.id && styles.rootChipOn,
-                ]}
-                onPress={() => {
-                  setRootId(p.id);
-                  resetView();
-                }}
-              >
-                <Text
-                  style={[
-                    styles.rootChipText,
-                    effectiveRoot === p.id && styles.rootChipTextOn,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {p.full_name}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </ScrollView>
+        <Pressable
+          style={styles.rootPicker}
+          onPress={() => setSearchModalVisible(true)}
+        >
+          <Text style={styles.rootLabel}>Gốc:</Text>
+          <Text style={styles.rootName} numberOfLines={1}>
+            {rootPerson.full_name}
+          </Text>
+        </Pressable>
         <Pressable
           style={[styles.filterBtn, showFilters && styles.filterBtnOn]}
           onPress={() => setShowFilters((v) => !v)}
@@ -352,6 +345,49 @@ export default function FamilyTreeView({
           </Text>
         </Pressable>
       </View>
+
+      {/* Root Search Modal */}
+      <Modal
+        visible={searchModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSearchModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Tìm tên gốc..."
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+            <FlatList
+              data={filteredRoots}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <Pressable
+                  style={styles.rootItem}
+                  onPress={() => {
+                    setRootId(item.id);
+                    resetView();
+                    setSearchModalVisible(false);
+                    setSearchQuery("");
+                  }}
+                >
+                  <Text>{item.full_name}</Text>
+                </Pressable>
+              )}
+            />
+            <Pressable
+              style={styles.closeBtn}
+              onPress={() => setSearchModalVisible(false)}
+            >
+              <Text style={styles.closeBtnText}>Đóng</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {showFilters && (
         <View style={styles.filters}>
@@ -430,28 +466,54 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 4,
   },
-  rootRow: {
+  rootPicker: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingRight: 8,
-  },
-  rootLabel: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
-  rootChip: {
-    maxWidth: 120,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  rootChipOn: {
-    backgroundColor: colors.amberSoft,
-    borderColor: colors.amber,
+  rootLabel: { fontSize: 12, fontWeight: "700", color: colors.textMuted },
+  rootName: { fontSize: 13, fontWeight: "700", color: colors.text },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 20,
   },
-  rootChipText: { fontSize: 11, fontWeight: "600", color: colors.textMuted },
-  rootChipTextOn: { color: colors.amberDark },
+  modalContent: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 16,
+    maxHeight: "80%",
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  rootItem: {
+    padding: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  closeBtn: {
+    marginTop: 10,
+    padding: 12,
+    alignItems: "center",
+    backgroundColor: colors.stone100,
+    borderRadius: 8,
+  },
+  closeBtnText: { fontWeight: "700" },
+
   filterBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,

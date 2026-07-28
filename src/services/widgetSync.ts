@@ -10,6 +10,7 @@ import { computeUpcomingEvents } from "./events";
 import { scheduleEventNotifications } from "./notifications";
 import { loadRuntimeConfig } from "./settings";
 import { fetchFamilyData, hasConfig } from "./supabaseData";
+import { reloadWidgets } from "../utils/widgetNative";
 
 /** Widget shows a wider window so it is not always empty. */
 export const WIDGET_EVENT_DAYS = 45;
@@ -43,6 +44,7 @@ function writeWidgetPayload(
   },
 ) {
   try {
+    console.log("DEBUG: Writing to App Group, siteName:", payload.siteName);
     storage.set("siteName", payload.siteName);
     storage.set("memberCount", payload.memberCount);
     storage.set("updatedAt", payload.updatedAt);
@@ -71,10 +73,12 @@ function writeWidgetPayload(
 
     ExtensionStorage.reloadWidget(WIDGET_KIND);
     ExtensionStorage.reloadWidget();
+    reloadWidgets(); // Force native reload
   } catch (e) {
     console.warn("widget write", e);
   }
 }
+...
 
 export type SyncResult = {
   ok: boolean;
