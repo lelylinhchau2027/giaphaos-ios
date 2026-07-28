@@ -4,8 +4,25 @@ import SwiftUI
 // MARK: - Shared data (App Group)
 
 private enum AppGroupStore {
-    /// Phải trùng `extra.appGroup` / entitlements trong app.config.js
-    static let suiteName = "group.com.giaphaos.family"
+    /// Tự động lấy App Group động từ Bundle Identifier để tương thích với mọi Bundle ID khi build hoặc ký ESign
+    static var suiteName: String {
+        guard let bundleId = Bundle.main.bundleIdentifier else {
+            return "group.com.giaphaos.family"
+        }
+        
+        // Loại bỏ phần suffix (như .widget hoặc .GiaPhaWidget) để lấy Bundle ID chính của app
+        if bundleId.hasSuffix(".widget") {
+            let mainId = String(bundleId.dropLast(".widget".count))
+            return "group.\(mainId)"
+        }
+        
+        if let lastDotIndex = bundleId.lastIndex(of: ".") {
+            let mainId = String(bundleId[..<lastDotIndex])
+            return "group.\(mainId)"
+        }
+        
+        return "group.\(bundleId)"
+    }
 
     static var defaults: UserDefaults {
         UserDefaults(suiteName: suiteName) ?? .standard

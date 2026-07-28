@@ -9,6 +9,7 @@ type Extra = {
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
+const bundleId = Constants.expoConfig?.ios?.bundleIdentifier || "com.giaphaos.family";
 
 /** @deprecated App native không còn WebView; giữ cho tương thích build cũ */
 export const WEB_URL =
@@ -32,6 +33,6 @@ export const SITE_NAME =
 export const APP_GROUP =
   extra.appGroup ||
   process.env.EXPO_PUBLIC_APP_GROUP ||
-  "group.com.giaphaos.family";
+  `group.${bundleId}`;
 
 export const HAS_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
