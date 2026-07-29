@@ -21,7 +21,16 @@ private enum AppGroupStore {
     }
 
     static var defaults: UserDefaults {
-        UserDefaults(suiteName: suiteName) ?? .standard
+        let defaults = UserDefaults(suiteName: suiteName)
+        if defaults == nil {
+            print("WIDGET DEBUG: Failed to access AppGroup: \(suiteName)")
+        } else {
+            print("WIDGET DEBUG: Successfully accessed AppGroup: \(suiteName)")
+            if let keys = defaults?.dictionaryRepresentation().keys {
+                print("WIDGET DEBUG: Available keys: \(keys)")
+            }
+        }
+        return defaults ?? .standard
     }
 
     static var siteName: String {
@@ -52,30 +61,25 @@ private enum AppGroupStore {
         defaults.integer(forKey: "hasKey") == 1
     }
 
-    /// Read events from App Group — supports both String JSON and Data JSON.
+    /// Read events from App Group — prefers File (JSON), falls back to UserDefaults.
     static var events: [WidgetEvent] {
-        // 1) String key "eventsJson"
+        // 1) Try reading from FileManager (robust)
+        let appGroupId = "group.com.giaphaos.family"
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) {
+            let fileURL = containerURL.appendingPathComponent("events.json")
+            if let data = try? Data(contentsOf: fileURL),
+               let list = decodeEvents(data) {
+                return list
+            }
+        }
+        
+        // 2) Fallback to UserDefaults
         if let raw = defaults.string(forKey: "eventsJson"),
            let data = raw.data(using: .utf8),
            let list = decodeEvents(data) {
             return list
         }
-        // 2) Data key "eventsJson"
-        if let data = defaults.data(forKey: "eventsJson"),
-           let list = decodeEvents(data) {
-            return list
-        }
-        // 3) Data key "events" (setArray from ExtensionStorage)
-        if let data = defaults.data(forKey: "events"),
-           let list = decodeEvents(data) {
-            return list
-        }
-        // 4) String key "events"
-        if let raw = defaults.string(forKey: "events"),
-           let data = raw.data(using: .utf8),
-           let list = decodeEvents(data) {
-            return list
-        }
+        
         return []
     }
 

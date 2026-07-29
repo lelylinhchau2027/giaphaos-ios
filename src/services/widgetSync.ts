@@ -10,7 +10,7 @@ import { computeUpcomingEvents } from "./events";
 import { scheduleEventNotifications } from "./notifications";
 import { loadRuntimeConfig } from "./settings";
 import { fetchFamilyData, hasConfig } from "./supabaseData";
-import { reloadWidgets } from "../utils/widgetNative";
+import { reloadWidgets, saveWidgetData } from "../utils/widgetNative";
 
 /** Widget shows a wider window so it is not always empty. */
 export const WIDGET_EVENT_DAYS = 45;
@@ -57,19 +57,12 @@ function writeWidgetPayload(
 
     // String JSON — Swift reads via string(forKey:)
     const json = JSON.stringify(payload.events.map(toWidgetEvent));
+    
+    // NEW: Use native file writer for robustness
+    saveWidgetData(json);
+    
+    // Legacy storage
     storage.set("eventsJson", json);
-
-    // Also store as array (Data) for robustness
-    try {
-      storage.set(
-        "events",
-        payload.events.map(toWidgetEvent) as unknown as Array<
-          Record<string, string | number>
-        >,
-      );
-    } catch {
-      // optional path
-    }
 
     ExtensionStorage.reloadWidget(WIDGET_KIND);
     ExtensionStorage.reloadWidget();
@@ -78,6 +71,7 @@ function writeWidgetPayload(
     console.warn("widget write", e);
   }
 }
+// ... (rest of the file remains same)
 
 export type SyncResult = {
   ok: boolean;

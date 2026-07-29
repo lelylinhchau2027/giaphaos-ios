@@ -7,3 +7,9 @@ export function reloadWidgets() {
     WidgetBridge.reloadAllTimelines();
   }
 }
+
+export function saveWidgetData(data: string) {
+  if (WidgetBridge && typeof WidgetBridge.saveWidgetData === 'function') {
+    WidgetBridge.saveWidgetData(data);
+  }
+}
