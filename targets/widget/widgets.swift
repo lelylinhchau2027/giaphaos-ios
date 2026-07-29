@@ -10,14 +10,14 @@ private enum AppGroupStore {
             return "group.com.giaphaos.family"
         }
         
-        // Nếu có suffix .widget, loại bỏ nó để lấy ID chính
-        if bundleId.hasSuffix(".widget") {
-            let mainId = String(bundleId.dropLast(".widget".count))
-            return "group.\(mainId)"
-        }
+        // Loại bỏ suffix .widget để lấy ID chính
+        let baseId = bundleId.replacingOccurrences(of: ".widget", with: "")
         
-        // Nếu không có suffix đặc biệt, dùng nguyên bundleId
-        return "group.\(bundleId)"
+        // Đảm bảo prefix group.
+        if baseId.hasPrefix("group.") {
+            return baseId
+        }
+        return "group.\(baseId)"
     }
 
     static var defaults: UserDefaults {
