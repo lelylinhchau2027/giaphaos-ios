@@ -78,7 +78,6 @@ function writeWidgetPayload(
     console.warn("widget write", e);
   }
 }
-...
 
 export type SyncResult = {
   ok: boolean;
