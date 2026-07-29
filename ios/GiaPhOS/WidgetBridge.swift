@@ -20,16 +20,27 @@ class WidgetBridge: NSObject {
   @objc
   func saveWidgetData(_ data: String) {
     let group = self.appGroupId
+    print("WIDGET DEBUG: Attempting to write events. Using group: \(group)")
+    
     if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
+      print("WIDGET DEBUG: Container URL: \(containerURL.path)")
       let fileURL = containerURL.appendingPathComponent("events.json")
+      
       do {
         try data.write(to: fileURL, atomically: true, encoding: .utf8)
-        print("WIDGET DEBUG: Successfully wrote events to \(fileURL.path) in group \(group)")
+        print("WIDGET DEBUG: Successfully wrote events to \(fileURL.path)")
+        
+        // Verify write
+        if let readBack = try? String(contentsOf: fileURL, encoding: .utf8) {
+            print("WIDGET DEBUG: Verification successful. File content length: \(readBack.count)")
+        } else {
+            print("WIDGET DEBUG: Verification failed. Could not read back the file.")
+        }
       } catch {
         print("WIDGET DEBUG: Failed to write events to group \(group): \(error)")
       }
     } else {
-        print("WIDGET DEBUG: Failed to get container URL for group: \(group)")
+        print("WIDGET DEBUG: Failed to get container URL for group: \(group). Ensure Entitlements are set up correctly.")
     }
   }
 }
