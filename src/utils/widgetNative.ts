@@ -13,3 +13,11 @@ export function saveWidgetData(data: string) {
     WidgetBridge.saveWidgetData(data);
   }
 }
+
+export function getWidgetLogs(callback: (logs: string) => void) {
+  if (WidgetBridge && typeof WidgetBridge.getWidgetLogs === 'function') {
+    WidgetBridge.getWidgetLogs(callback);
+  } else {
+    callback("WidgetBridge not available");
+  }
+}

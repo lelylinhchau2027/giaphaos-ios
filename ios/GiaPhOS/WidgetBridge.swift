@@ -3,6 +3,16 @@ import Foundation
 
 @objc(WidgetBridge)
 class WidgetBridge: NSObject {
+  // Shared storage for logs
+  static var logMessages: [String] = []
+  static let maxLogs = 20
+
+  private static func addLog(_ message: String) {
+    let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+    logMessages.append("[\(timestamp)] \(message)")
+    if logMessages.count > maxLogs { logMessages.removeFirst() }
+  }
+
   @objc
   func reloadAllTimelines() {
     if #available(iOS 14.0, *) {
@@ -12,7 +22,6 @@ class WidgetBridge: NSObject {
     
   private var appGroupId: String {
     let bundleId = Bundle.main.bundleIdentifier ?? "com.giaphaos.family"
-    // If the bundle ID has a .widget suffix, remove it to find the base ID
     let baseId = bundleId.replacingOccurrences(of: ".widget", with: "")
     return "group.\(baseId)"
   }
@@ -20,27 +29,31 @@ class WidgetBridge: NSObject {
   @objc
   func saveWidgetData(_ data: String) {
     let group = self.appGroupId
-    print("WIDGET DEBUG: Attempting to write events. Using group: \(group)")
+    WidgetBridge.addLog("Attempting to write events. Using group: \(group)")
     
     if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) {
-      print("WIDGET DEBUG: Container URL: \(containerURL.path)")
+      WidgetBridge.addLog("Container URL: \(containerURL.path)")
       let fileURL = containerURL.appendingPathComponent("events.json")
       
       do {
         try data.write(to: fileURL, atomically: true, encoding: .utf8)
-        print("WIDGET DEBUG: Successfully wrote events to \(fileURL.path)")
+        WidgetBridge.addLog("Successfully wrote events.")
         
-        // Verify write
         if let readBack = try? String(contentsOf: fileURL, encoding: .utf8) {
-            print("WIDGET DEBUG: Verification successful. File content length: \(readBack.count)")
+            WidgetBridge.addLog("Verification successful. Content length: \(readBack.count)")
         } else {
-            print("WIDGET DEBUG: Verification failed. Could not read back the file.")
+            WidgetBridge.addLog("Verification failed.")
         }
       } catch {
-        print("WIDGET DEBUG: Failed to write events to group \(group): \(error)")
+        WidgetBridge.addLog("Failed to write events: \(error.localizedDescription)")
       }
     } else {
-        print("WIDGET DEBUG: Failed to get container URL for group: \(group). Ensure Entitlements are set up correctly.")
+        WidgetBridge.addLog("Failed to get container URL. Ensure Entitlements.")
     }
+  }
+
+  @objc
+  func getWidgetLogs(_ callback: RCTResponseSenderBlock) {
+    callback([WidgetBridge.logMessages.joined(separator: "\n")])
   }
 }
