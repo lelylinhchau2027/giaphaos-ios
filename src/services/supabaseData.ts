@@ -70,7 +70,7 @@ export async function fetchPrivateDetails(
   if (!sb) return null;
   const { data, error } = await sb
     .from("person_details_private")
-    .select("person_id,phone_number,occupation,current_residence")
+    .select("person_id,phone_number,occupation,current_residence,facebook_url")
     .eq("person_id", personId)
     .maybeSingle();
   if (error) return null;

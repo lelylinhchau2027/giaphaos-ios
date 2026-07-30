@@ -1,7 +1,8 @@
 import { router, useLocalSearchParams } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,13 +13,19 @@ import { Image } from "expo-image";
 import GenderBadge from "../../src/components/GenderBadge";
 import RelationshipManager from "../../src/components/RelationshipManager";
 import { useFamilyData } from "../../src/context/FamilyDataContext";
-import { deletePerson } from "../../src/services/supabaseData";
+import { deletePerson, fetchPrivateDetails } from "../../src/services/supabaseData";
+import type { PrivateDetails } from "../../src/types";
 import { colors, genderBg, genderColor } from "../../src/theme";
 import {
   formatLunarDeath,
   formatYmd,
   genderLabel,
 } from "../../src/utils/format";
+
+function normalizeFacebookUrl(raw: string): string {
+  const trimmed = raw.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
 
 export default function MemberDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -35,6 +42,21 @@ export default function MemberDetailScreen() {
     () => persons.find((p) => p.id === id),
     [persons, id],
   );
+
+  const [privateDetails, setPrivateDetails] = useState<PrivateDetails | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!person) return;
+    let cancelled = false;
+    fetchPrivateDetails(config, person.id).then((d) => {
+      if (!cancelled) setPrivateDetails(d);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config, person?.id]);
 
   if (!person) {
     return (
@@ -108,6 +130,35 @@ export default function MemberDetailScreen() {
             <Text style={styles.badge}>Con thứ {person.birth_order}</Text>
           )}
         </View>
+
+        {(privateDetails?.facebook_url || privateDetails?.phone_number) && (
+          <View style={styles.contactRow}>
+            {privateDetails?.facebook_url ? (
+              <Pressable
+                style={styles.contactBtn}
+                onPress={() =>
+                  Linking.openURL(
+                    normalizeFacebookUrl(privateDetails.facebook_url!),
+                  )
+                }
+              >
+                <Text style={styles.contactBtnText}>Facebook</Text>
+              </Pressable>
+            ) : null}
+            {privateDetails?.phone_number ? (
+              <Pressable
+                style={[styles.contactBtn, styles.contactBtnCall]}
+                onPress={() =>
+                  Linking.openURL(`tel:${privateDetails.phone_number}`)
+                }
+              >
+                <Text style={[styles.contactBtnText, styles.contactBtnCallText]}>
+                  Số điện thoại
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        )}
       </View>
 
       <View style={styles.card}>
@@ -197,6 +248,21 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: "hidden",
   },
+  contactRow: { flexDirection: "row", gap: 8, marginTop: 12 },
+  contactBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: colors.blueSoft,
+    borderWidth: 1,
+    borderColor: colors.blue,
+  },
+  contactBtnText: { color: colors.blue, fontWeight: "800", fontSize: 13 },
+  contactBtnCall: {
+    backgroundColor: colors.emeraldSoft,
+    borderColor: colors.emerald,
+  },
+  contactBtnCallText: { color: colors.emerald },
   card: {
     backgroundColor: colors.white,
     borderRadius: 16,

@@ -30,6 +30,46 @@ type Props = {
   onCancel: () => void;
 };
 
+/**
+ * Module-scope on purpose: defining this inside MemberForm's render would
+ * give it a new function identity every keystroke, so React would remount
+ * (not just re-render) every TextInput on each change — dropping focus and
+ * dismissing the keyboard after a single character.
+ */
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboardType = "default",
+  multiline,
+  autoCapitalize,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  keyboardType?: "default" | "number-pad" | "phone-pad" | "url";
+  multiline?: boolean;
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        style={[styles.input, multiline && styles.multiline]}
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={colors.textSoft}
+        keyboardType={keyboardType}
+        multiline={multiline}
+        autoCapitalize={autoCapitalize}
+      />
+    </View>
+  );
+}
+
 export default function MemberForm({
   config,
   initial,
@@ -55,6 +95,7 @@ export default function MemberForm({
   const [phone, setPhone] = useState(initial?.phone_number || "");
   const [occupation, setOccupation] = useState(initial?.occupation || "");
   const [residence, setResidence] = useState(initial?.current_residence || "");
+  const [facebookUrl, setFacebookUrl] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -64,6 +105,7 @@ export default function MemberForm({
       setPhone(d.phone_number || "");
       setOccupation(d.occupation || "");
       setResidence(d.current_residence || "");
+      setFacebookUrl(d.facebook_url || "");
     });
   }, [config, initial?.id]);
 
@@ -129,6 +171,7 @@ export default function MemberForm({
           phone_number: phone.trim() || null,
           occupation: occupation.trim() || null,
           current_residence: residence.trim() || null,
+          facebook_url: facebookUrl.trim() || null,
         });
       }
 
@@ -140,37 +183,12 @@ export default function MemberForm({
     }
   };
 
-  const Field = ({
-    label,
-    value,
-    onChange,
-    placeholder,
-    keyboardType = "default" as const,
-    multiline,
-  }: {
-    label: string;
-    value: string;
-    onChange: (v: string) => void;
-    placeholder?: string;
-    keyboardType?: "default" | "number-pad" | "phone-pad";
-    multiline?: boolean;
-  }) => (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        style={[styles.input, multiline && styles.multiline]}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textSoft}
-        keyboardType={keyboardType}
-        multiline={multiline}
-      />
-    </View>
-  );
-
   return (
-    <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={styles.scroll}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets
+    >
       <Text style={styles.title}>{editing ? "Sửa thành viên" : "Thêm thành viên"}</Text>
 
       <Pressable style={styles.avatarWrap} onPress={pickAvatar}>
@@ -244,6 +262,14 @@ export default function MemberForm({
         <>
           <Text style={styles.section}>Thông tin riêng</Text>
           <Field label="Điện thoại" value={phone} onChange={setPhone} keyboardType="phone-pad" />
+          <Field
+            label="Link Facebook"
+            value={facebookUrl}
+            onChange={setFacebookUrl}
+            placeholder="https://facebook.com/..."
+            keyboardType="url"
+            autoCapitalize="none"
+          />
           <Field label="Nghề nghiệp" value={occupation} onChange={setOccupation} />
           <Field label="Nơi ở" value={residence} onChange={setResidence} />
         </>
