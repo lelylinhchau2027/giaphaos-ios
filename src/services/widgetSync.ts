@@ -1,5 +1,4 @@
 import { ExtensionStorage } from "@bacons/apple-targets";
-import { APP_GROUP } from "../config";
 import type {
   CustomEventRow,
   FamilyEventItem,
@@ -8,23 +7,20 @@ import type {
 } from "../types";
 import { computeUpcomingEvents } from "./events";
 import { scheduleEventNotifications } from "./notifications";
-import { loadRuntimeConfig } from "./settings";
+import { loadRuntimeConfig, type RuntimeConfig } from "./settings";
 import { fetchFamilyData, hasConfig } from "./supabaseData";
-import {
-  reloadWidgets,
-  saveWidgetData,
-  saveWidgetInfo,
-} from "../utils/widgetNative";
+import { getSupabase } from "./supabaseClient";
 
 /** Widget shows a wider window so it is not always empty. */
 export const WIDGET_EVENT_DAYS = 45;
 /** Notifications stay focused on the near term. */
 export const NOTIF_EVENT_DAYS = 14;
 
-const storage = new ExtensionStorage(APP_GROUP);
-
 /** Widget kind must match Swift `GiaPhaWidget.kind`. */
 const WIDGET_KIND = "GiaPhaWidget";
+
+/** Fixed single-row cache the widget reads via Supabase REST — see docs/migrations/2026-07-30_widget_cache.sql */
+const WIDGET_CACHE_ID = "default";
 
 function toWidgetEvent(e: FamilyEventItem) {
   return {
@@ -39,57 +35,38 @@ function toWidgetEvent(e: FamilyEventItem) {
   };
 }
 
-function writeWidgetPayload(
-  payload: WidgetPayload & {
-    supabaseUrl?: string;
-    hasKey?: boolean;
-    syncError?: string;
-    windowDays?: number;
-  },
-) {
-  try {
-    console.log("DEBUG: Writing to App Group, siteName:", payload.siteName);
-
-    const json = JSON.stringify(payload.events.map(toWidgetEvent));
-
-    // Primary path: our own native bridge (plain RCTBridgeModule), which we
-    // can verify via getWidgetLogs(). @bacons/apple-targets's ExtensionStorage
-    // silently no-ops (no throw) if its Expo Module isn't autolinked in a
-    // given build, which made failures invisible — route the real writes
-    // through WidgetBridge instead.
-    saveWidgetInfo({
-      siteName: payload.siteName,
-      memberCount: payload.memberCount,
-      updatedAt: payload.updatedAt,
-      windowDays: payload.windowDays ?? WIDGET_EVENT_DAYS,
-      hasKey: payload.hasKey ? 1 : 0,
-      syncError: payload.syncError ?? "",
-      eventsJson: json,
-      ...(payload.supabaseUrl ? { supabaseUrl: payload.supabaseUrl } : {}),
-    });
-    saveWidgetData(json);
-
-    // Legacy path — kept as a harmless fallback in case ExtensionStorage
-    // does work in this build.
-    storage.set("siteName", payload.siteName);
-    storage.set("memberCount", payload.memberCount);
-    storage.set("updatedAt", payload.updatedAt);
-    storage.set("windowDays", payload.windowDays ?? WIDGET_EVENT_DAYS);
-    storage.set("hasKey", payload.hasKey ? 1 : 0);
-    storage.set("syncError", payload.syncError ?? "");
-    if (payload.supabaseUrl) {
-      storage.set("supabaseUrl", payload.supabaseUrl);
-    }
-    storage.set("eventsJson", json);
-
-    ExtensionStorage.reloadWidget(WIDGET_KIND);
-    ExtensionStorage.reloadWidget();
-    reloadWidgets(); // Force native reload
-  } catch (e) {
-    console.warn("widget write", e);
+/**
+ * ESign (Apple ID cá nhân) không cấp được App Group entitlement, nên app
+ * và widget không thể chia sẻ dữ liệu qua App Group container nữa. Widget
+ * tự gọi Supabase REST trực tiếp (xem targets/widget/widgets.swift) — app
+ * chỉ cần ghi snapshot đã tính sẵn vào bảng `widget_cache`.
+ */
+async function pushWidgetCache(
+  cfg: RuntimeConfig,
+  payload: WidgetPayload,
+): Promise<void> {
+  const sb = getSupabase(cfg);
+  if (!sb) return;
+  const { error } = await sb.from("widget_cache").upsert({
+    id: WIDGET_CACHE_ID,
+    site_name: payload.siteName,
+    member_count: payload.memberCount,
+    events_json: JSON.stringify(payload.events.map(toWidgetEvent)),
+    updated_at: payload.updatedAt,
+  });
+  if (error) {
+    console.warn("widget_cache upsert failed", error.message);
   }
 }
-// ... (rest of the file remains same)
+
+function reloadWidget() {
+  try {
+    ExtensionStorage.reloadWidget(WIDGET_KIND);
+    ExtensionStorage.reloadWidget();
+  } catch (e) {
+    console.warn("reloadWidget", e);
+  }
+}
 
 export type SyncResult = {
   ok: boolean;
@@ -113,16 +90,6 @@ export async function syncWidgetAndNotifications(opts?: {
     const configured = hasConfig(cfg);
 
     if (!configured) {
-      writeWidgetPayload({
-        updatedAt: new Date().toISOString(),
-        memberCount: 0,
-        events: [],
-        siteName: cfg.siteName,
-        supabaseUrl: cfg.supabaseUrl || "",
-        hasKey: false,
-        syncError: "Chưa cấu hình Supabase trong Cài đặt",
-        windowDays: WIDGET_EVENT_DAYS,
-      });
       return {
         ok: false,
         memberCount: 0,
@@ -166,13 +133,8 @@ export async function syncWidgetAndNotifications(opts?: {
       siteName: opts?.siteName || cfg.siteName,
     };
 
-    writeWidgetPayload({
-      ...payload,
-      supabaseUrl: cfg.supabaseUrl,
-      hasKey: Boolean(cfg.supabaseAnonKey),
-      syncError: "",
-      windowDays: WIDGET_EVENT_DAYS,
-    });
+    await pushWidgetCache(cfg, payload);
+    reloadWidget();
 
     await scheduleEventNotifications(notifEvents, NOTIF_EVENT_DAYS).catch(
       () => undefined,
@@ -186,18 +148,6 @@ export async function syncWidgetAndNotifications(opts?: {
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "sync failed";
-    try {
-      writeWidgetPayload({
-        updatedAt: new Date().toISOString(),
-        memberCount: 0,
-        events: [],
-        siteName: "Gia Phả OS",
-        syncError: msg,
-        windowDays: WIDGET_EVENT_DAYS,
-      });
-    } catch {
-      // ignore
-    }
     return {
       ok: false,
       memberCount: 0,

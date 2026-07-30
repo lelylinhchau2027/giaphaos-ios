@@ -1,19 +1,6 @@
 const { withEntitlementsPlist } = require("expo/config-plugins");
 
 const bundleId = process.env.IOS_BUNDLE_ID || "com.giaphaos.family";
-/**
- * Cố định, KHÔNG suy ra từ bundleId. App Group là một namespace toàn cục
- * của Apple (không riêng theo từng Apple ID) — nếu chuỗi này từng được
- * đăng ký (bởi chính máy này ở lần ký ESign trước, tài khoản Apple khác,
- * hay bất kỳ ai) dưới một Apple ID KHÁC với Apple ID đang dùng để ký, thì
- * Apple sẽ từ chối cấp lại App Group đó — app vẫn cài/chạy bình thường
- * nhưng `FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`
- * luôn trả về nil, khiến app/widget không chia sẻ được dữ liệu (widget kẹt
- * ở trạng thái rỗng dù app đã đồng bộ thành công). Hậu tố ngẫu nhiên bên
- * dưới giảm khả năng trùng với App Group ai đó đã đăng ký trước đó.
- */
-const appGroup =
-  process.env.EXPO_PUBLIC_APP_GROUP || "group.com.giaphaos.family.gp2wq9xk";
 
 /**
  * App chỉ dùng local notifications (không có remote push token nào được
@@ -55,12 +42,6 @@ module.exports = {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: false,
       },
-      // Đọc bằng Swift lúc runtime (WidgetBridgeModule) thay vì suy ra từ
-      // bundle identifier — tránh lệch khi appGroup khác `group.<bundleId>`.
-      AppGroupIdentifier: appGroup,
-    },
-    entitlements: {
-      "com.apple.security.application-groups": [appGroup],
     },
     config: {
       usesNonExemptEncryption: false,
@@ -111,7 +92,6 @@ module.exports = {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
     siteName: process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả OS",
-    appGroup,
     eas: {
       projectId: process.env.EAS_PROJECT_ID || "",
     },

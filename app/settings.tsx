@@ -11,9 +11,7 @@ import {
 } from "react-native";
 import { useFamilyData } from "../src/context/FamilyDataContext";
 import { getBuiltInSupabase } from "../src/services/settings";
-import { APP_GROUP } from "../src/config";
 import { colors } from "../src/theme";
-import { getWidgetLogs } from "../src/utils/widgetNative";
 
 export default function SettingsRoute() {
   const { config, saveConfig, syncNative, lastSync, persons, customEvents } =
@@ -47,17 +45,6 @@ export default function SettingsRoute() {
     }
   };
 
-  const onViewWidgetLogs = () => {
-    getWidgetLogs((logs) => {
-      Alert.alert(
-        "Log widget (debug)",
-        logs && logs.trim().length > 0
-          ? logs
-          : "(Chưa có log — bấm 'Đồng bộ widget ngay' trước)",
-      );
-    });
-  };
-
   const onSyncWidget = async () => {
     setSyncing(true);
     try {
@@ -68,14 +55,12 @@ export default function SettingsRoute() {
           `${r.memberCount} thành viên · ${r.eventCount} sự kiện sắp tới` +
             (r.eventsPreview?.length
               ? `\n\nGần nhất: ${r.eventsPreview.join(", ")}`
-              : "\n\n(Không có sự kiện trong ~45–365 ngày — kiểm tra ngày sinh / tab Lịch)") +
-            `\n\nApp Group: ${APP_GROUP}\nGỡ widget cũ rồi thêm lại nếu chưa hiện.`,
+              : "\n\n(Không có sự kiện trong ~45–365 ngày — kiểm tra ngày sinh / tab Lịch)"),
         );
       } else {
         Alert.alert(
           "Đồng bộ thất bại",
-          r.error ||
-            "Kiểm tra Supabase URL/key. Nếu dùng ESign, cert cần hỗ trợ App Group.",
+          r.error || "Kiểm tra Supabase URL/key trong Cài đặt.",
         );
       }
     } finally {
@@ -136,8 +121,6 @@ export default function SettingsRoute() {
               ? `OK · ${lastSync.eventCount} sự kiện`
               : `Lỗi: ${lastSync.error}`
             : "chưa"}
-          {"\n"}
-          App Group: {APP_GROUP}
         </Text>
         <Pressable
           style={styles.btnSync}
@@ -151,12 +134,10 @@ export default function SettingsRoute() {
           )}
         </Pressable>
         <Text style={styles.syncTip}>
-          Sau khi sync: gỡ widget khỏi màn hình chính → thêm lại widget “Gia
-          Phả”. ESign phải giữ App Group {APP_GROUP}.
+          Widget tự lấy dữ liệu từ Supabase, không cần mở app để đồng bộ —
+          nhưng bấm nút này ngay sau khi đổi dữ liệu để widget cập nhật liền
+          thay vì chờ WidgetKit tự refresh.
         </Text>
-        <Pressable style={styles.btnLogs} onPress={onViewWidgetLogs}>
-          <Text style={styles.btnLogsText}>Xem log widget (debug)</Text>
-        </Pressable>
       </View>
 
       <Text style={styles.migration}>
@@ -221,17 +202,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.amberSoft,
   },
   btnSyncText: { color: colors.amberDark, fontWeight: "800" },
-  btnLogs: {
-    marginTop: 8,
-    paddingVertical: 8,
-    alignItems: "center",
-  },
-  btnLogsText: {
-    color: colors.textSoft,
-    fontWeight: "700",
-    fontSize: 12,
-    textDecorationLine: "underline",
-  },
   syncTip: {
     marginTop: 10,
     fontSize: 11,

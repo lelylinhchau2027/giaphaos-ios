@@ -10,10 +10,7 @@ module.exports = (config) => ({
     $accent: "#D97706",
     $widgetBackground: "#FAFAF9",
   },
-  entitlements: {
-    "com.apple.security.application-groups":
-      config.ios?.entitlements?.["com.apple.security.application-groups"] || [
-        `group.${config.ios?.bundleIdentifier || "com.giaphaos.family"}`,
-      ],
-  },
+  // Không cần App Group / entitlements: widget tự gọi Supabase REST trực
+  // tiếp (xem widgets.swift) — ESign (Apple ID cá nhân) không cấp được
+  // App Group nên không thể chia sẻ dữ liệu qua App Group container nữa.
 });

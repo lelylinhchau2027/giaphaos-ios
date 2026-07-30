@@ -1,101 +1,89 @@
 import WidgetKit
 import SwiftUI
 
-// MARK: - Shared data (App Group)
+// MARK: - Data source (Supabase REST — no App Group)
+//
+// ESign (Apple ID cá nhân) không cấp được App Group entitlement, nên app
+// và widget không thể chia sẻ dữ liệu qua UserDefaults(suiteName:)/File
+// container nữa. Thay vào đó widget tự gọi thẳng Supabase REST API bằng
+// SupabaseURL/SupabaseAnonKey nhúng sẵn lúc build (đọc qua Info.plist),
+// đọc snapshot đã tính sẵn (member_count/events_json) từ bảng
+// `widget_cache` mà app ghi mỗi lần đồng bộ. Xem docs/migrations/
+// 2026-07-30_widget_cache.sql.
 
-private enum AppGroupStore {
-    /// Đọc App Group từ Info.plist (khớp `appGroup` trong app.config.js) —
-    /// KHÔNG suy ra từ bundle identifier, vì App Group không nhất thiết
-    /// theo mẫu `group.<bundleId>`.
-    static var suiteName: String {
-        if let fromPlist = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
-           !fromPlist.isEmpty {
-            return fromPlist
+private enum SupabaseConfig {
+    static var url: String {
+        (Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String) ?? ""
+    }
+    static var anonKey: String {
+        (Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String) ?? ""
+    }
+    static var isConfigured: Bool {
+        !url.isEmpty && !anonKey.isEmpty && url.hasPrefix("http") && anonKey.count > 20
+    }
+}
+
+private struct WidgetCacheRow: Decodable {
+    let site_name: String?
+    let member_count: Int?
+    let events_json: String?
+    let updated_at: String?
+}
+
+private func decodeEvents(_ data: Data) -> [WidgetEvent]? {
+    // Flexible decoder: tolerate missing optionals / extra fields
+    if let list = try? JSONDecoder().decode([WidgetEvent].self, from: data) {
+        return list
+    }
+    // Sometimes wrapped or pretty-printed with unexpected types (daysUntil as Double)
+    guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        return nil
+    }
+    return arr.compactMap { WidgetEvent(dict: $0) }
+}
+
+private func fetchWidgetCache(completion: @escaping (Result<WidgetCacheRow, String>) -> Void) {
+    guard SupabaseConfig.isConfigured, let base = URL(string: SupabaseConfig.url) else {
+        completion(.failure("Chưa cấu hình Supabase lúc build widget"))
+        return
+    }
+    guard var comps = URLComponents(url: base.appendingPathComponent("rest/v1/widget_cache"), resolvingAgainstBaseURL: false) else {
+        completion(.failure("Supabase URL không hợp lệ"))
+        return
+    }
+    comps.queryItems = [
+        URLQueryItem(name: "id", value: "eq.default"),
+        URLQueryItem(name: "select", value: "site_name,member_count,events_json,updated_at"),
+        URLQueryItem(name: "limit", value: "1"),
+    ]
+    guard let url = comps.url else {
+        completion(.failure("Supabase URL không hợp lệ"))
+        return
+    }
+    var req = URLRequest(url: url)
+    req.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+    req.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+    req.timeoutInterval = 15
+
+    URLSession.shared.dataTask(with: req) { data, response, error in
+        if let error = error {
+            completion(.failure("Lỗi mạng: \(error.localizedDescription)"))
+            return
         }
-        guard let bundleId = Bundle.main.bundleIdentifier else {
-            return "group.com.giaphaos.family"
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            completion(.failure("Supabase lỗi (HTTP \(http.statusCode)) — kiểm tra bảng widget_cache/RLS"))
+            return
         }
-        let baseId = bundleId.replacingOccurrences(of: ".widget", with: "")
-        if baseId.hasPrefix("group.") {
-            return baseId
+        guard let data = data else {
+            completion(.failure("Không có dữ liệu trả về"))
+            return
         }
-        return "group.\(baseId)"
-    }
-
-    static var defaults: UserDefaults {
-        let defaults = UserDefaults(suiteName: suiteName)
-        if defaults == nil {
-            print("WIDGET DEBUG: Failed to access AppGroup: \(suiteName)")
-        } else {
-            print("WIDGET DEBUG: Successfully accessed AppGroup: \(suiteName)")
-            if let keys = defaults?.dictionaryRepresentation().keys {
-                print("WIDGET DEBUG: Available keys: \(keys)")
-            }
+        guard let rows = try? JSONDecoder().decode([WidgetCacheRow].self, from: data), let row = rows.first else {
+            completion(.failure("Mở app Gia Phả một lần để đồng bộ widget"))
+            return
         }
-        return defaults ?? .standard
-    }
-
-    static var siteName: String {
-        defaults.string(forKey: "siteName") ?? "Gia Phả OS"
-    }
-
-    static var memberCount: Int {
-        if defaults.object(forKey: "memberCount") != nil {
-            return defaults.integer(forKey: "memberCount")
-        }
-        return 0
-    }
-
-    static var updatedAt: String {
-        defaults.string(forKey: "updatedAt") ?? ""
-    }
-
-    static var windowDays: Int {
-        let v = defaults.integer(forKey: "windowDays")
-        return v > 0 ? v : 45
-    }
-
-    static var syncError: String {
-        defaults.string(forKey: "syncError") ?? ""
-    }
-
-    static var hasKey: Bool {
-        defaults.integer(forKey: "hasKey") == 1
-    }
-
-    /// Read events from App Group — prefers File (JSON), falls back to UserDefaults.
-    static var events: [WidgetEvent] {
-        // 1) Try reading from FileManager (robust)
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName) {
-            let fileURL = containerURL.appendingPathComponent("events.json")
-            if let data = try? Data(contentsOf: fileURL),
-               let list = decodeEvents(data) {
-                return list
-            }
-        }
-        
-        // 2) Fallback to UserDefaults
-        if let raw = defaults.string(forKey: "eventsJson"),
-           let data = raw.data(using: .utf8),
-           let list = decodeEvents(data) {
-            return list
-        }
-        
-        return []
-    }
-
-    private static func decodeEvents(_ data: Data) -> [WidgetEvent]? {
-        // Flexible decoder: tolerate missing optionals / extra fields
-        let decoder = JSONDecoder()
-        if let list = try? decoder.decode([WidgetEvent].self, from: data) {
-            return list
-        }
-        // Sometimes wrapped or pretty-printed with unexpected types (daysUntil as Double)
-        guard let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return nil
-        }
-        return arr.compactMap { WidgetEvent(dict: $0) }
-    }
+        completion(.success(row))
+    }.resume()
 }
 
 struct WidgetEvent: Codable, Identifiable, Hashable {
@@ -222,41 +210,48 @@ struct Provider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> Void) {
-        completion(loadEntry())
+        loadEntry(completion: completion)
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<SimpleEntry>) -> Void) {
-        let entry = loadEntry()
-        // Refresh more often so new events appear sooner
-        let next = Calendar.current.date(byAdding: .minute, value: 30, to: Date())
-            ?? Date().addingTimeInterval(1800)
-        completion(Timeline(entries: [entry], policy: .after(next)))
+        loadEntry { entry in
+            // Refresh more often so new events appear sooner
+            let next = Calendar.current.date(byAdding: .minute, value: 30, to: Date())
+                ?? Date().addingTimeInterval(1800)
+            completion(Timeline(entries: [entry], policy: .after(next)))
+        }
     }
 
-    private func loadEntry() -> SimpleEntry {
-        let events = AppGroupStore.events
-        var note = ""
-        if !events.isEmpty {
-            note = ""
-        } else if !AppGroupStore.syncError.isEmpty {
-            note = AppGroupStore.syncError
-        } else if AppGroupStore.memberCount == 0 && !AppGroupStore.hasKey {
-            note = "Mở app → Cài đặt → nhập Supabase, rồi mở lại widget"
-        } else if AppGroupStore.memberCount == 0 {
-            note = "Mở app Gia Phả một lần để đồng bộ"
-        } else {
-            note = "Chưa có sự kiện sắp tới — thêm ngày sinh/sự kiện trong app"
+    private func loadEntry(completion: @escaping (SimpleEntry) -> Void) {
+        fetchWidgetCache { result in
+            switch result {
+            case .success(let row):
+                let events = (row.events_json ?? "[]").data(using: .utf8).flatMap(decodeEvents) ?? []
+                let memberCount = row.member_count ?? 0
+                let note = events.isEmpty
+                    ? "Chưa có sự kiện sắp tới — thêm ngày sinh/sự kiện trong app"
+                    : ""
+                completion(SimpleEntry(
+                    date: Date(),
+                    siteName: row.site_name ?? "Gia Phả OS",
+                    memberCount: memberCount,
+                    events: events,
+                    updatedAt: row.updated_at ?? "",
+                    windowDays: 45,
+                    statusNote: note
+                ))
+            case .failure(let message):
+                completion(SimpleEntry(
+                    date: Date(),
+                    siteName: "Gia Phả OS",
+                    memberCount: 0,
+                    events: [],
+                    updatedAt: "",
+                    windowDays: 45,
+                    statusNote: message
+                ))
+            }
         }
-
-        return SimpleEntry(
-            date: Date(),
-            siteName: AppGroupStore.siteName,
-            memberCount: AppGroupStore.memberCount,
-            events: events,
-            updatedAt: AppGroupStore.updatedAt,
-            windowDays: AppGroupStore.windowDays,
-            statusNote: note
-        )
     }
 }
 

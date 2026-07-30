@@ -13,11 +13,11 @@ on:
         required: false
         default: "https://giapha-os.homielab.com"
       supabase_url:
-        description: "Supabase URL (BẮT BUỘC — nguồn dữ liệu app)"
+        description: "Supabase URL (BẮT BUỘC — app VÀ widget đều dùng)"
         required: true
         default: ""
       supabase_anon_key:
-        description: "Supabase anon key (BẮT BUỘC)"
+        description: "Supabase anon key THẬT (BẮT BUỘC — nhúng thẳng vào widget lúc build, không dùng placeholder được nữa vì widget không có UI để nhập tay)"
         required: true
         default: ""
       bundle_id:
@@ -88,11 +88,6 @@ jobs:
 
       - name: Write build env
         run: |
-          # EXPO_PUBLIC_APP_GROUP is intentionally NOT set here — app.config.js
-          # has its own fixed, hard-to-collide default (not derived from
-          # bundle_id). Overriding it per-bundle-id was the mechanism that
-          # kept regenerating `group.<bundle_id>`, which risks colliding with
-          # an App Group already registered under a different Apple ID.
           cat > .env << EOF
           EXPO_PUBLIC_WEB_URL=${{ inputs.web_url }}
           EXPO_PUBLIC_SUPABASE_URL=${{ inputs.supabase_url }}
@@ -171,11 +166,13 @@ jobs:
           # "Ad Hoc" (CODE_SIGN_IDENTITY="-") cho build thiết bị iOS — dùng
           # giá trị đó làm build fail với lỗi "Ad Hoc code signing is not
           # allowed with SDK 'iOS 26.2'" trên mọi target (kể cả Pods).
-          # ESign không cần binary được ký sẵn để biết app cần App Group —
-          # nó đọc từ các file *.entitlements trong source project
-          # (ios/GiaPhOS/GiaPhOS.entitlements,
-          # ios/.targets/GiaPhaWidget/generated.entitlements), không phải
-          # từ chữ ký nhúng trong .app/.appex lúc CI build.
+          # ESign tự ký lại + cấp capability lúc cài trên máy.
+          #
+          # SUPABASE_URL / SUPABASE_ANON_KEY: build setting override, được
+          # Info.plist của target widget đọc qua $(SUPABASE_URL) — widget
+          # không có App Group nên tự gọi thẳng Supabase REST, cần 2 giá trị
+          # này nhúng sẵn lúc build (xem targets/widget/Info.plist +
+          # targets/widget/widgets.swift).
           if ! xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -190,6 +187,8 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
+            SUPABASE_URL="${{ inputs.supabase_url }}" \
+            SUPABASE_ANON_KEY="${{ inputs.supabase_anon_key }}" \
             build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
           then
             echo "======== xcodebuild errors (filtered) ========"
@@ -200,17 +199,23 @@ jobs:
 
           echo "DERIVED=$DERIVED" >> "$GITHUB_ENV"
 
-      - name: Verify entitlements (debug)
+      - name: Verify widget Supabase config embedded (debug)
         run: |
           set -euo pipefail
-          echo "=== Embedded signature (expected empty — build is unsigned) ==="
-          for BUNDLE in $(find "$DERIVED/Build/Products" -maxdepth 3 -type d \( -name "*.app" -o -name "*.appex" \)); do
-            echo "--- $BUNDLE ---"
-            codesign -d --entitlements :- "$BUNDLE" 2>&1 || echo "(unsigned, as expected)"
-          done
-          echo ""
-          echo "=== Source entitlements files (what ESign should grant) ==="
-          find . -name "*.entitlements" -exec sh -c 'echo "--- {} ---"; cat "{}"; echo' \;
+          WIDGET_APP=$(find "$DERIVED/Build/Products" -maxdepth 3 -type d -name "*.appex" | head -1)
+          if [[ -z "${WIDGET_APP:-}" ]]; then
+            echo "ERROR: không tìm thấy .appex của widget"
+            exit 1
+          fi
+          echo "Widget bundle: $WIDGET_APP"
+          URL_VALUE=$(/usr/libexec/PlistBuddy -c "Print :SupabaseURL" "$WIDGET_APP/Info.plist" 2>&1 || true)
+          KEY_LEN=$(/usr/libexec/PlistBuddy -c "Print :SupabaseAnonKey" "$WIDGET_APP/Info.plist" 2>/dev/null | wc -c | tr -d ' ')
+          echo "SupabaseURL in widget Info.plist: $URL_VALUE"
+          echo "SupabaseAnonKey length in widget Info.plist: $KEY_LEN"
+          if [[ "$URL_VALUE" != http* ]]; then
+            echo "ERROR: SupabaseURL không được nhúng đúng — widget sẽ không gọi được Supabase"
+            exit 1
+          fi
 
       - name: Package IPA
         run: |

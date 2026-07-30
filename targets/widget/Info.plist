@@ -7,8 +7,12 @@
       <key>NSExtensionPointIdentifier</key>
       <string>com.apple.widgetkit-extension</string>
     </dict>
-    <!-- Phải khớp appGroup trong app.config.js (đọc bằng Swift ở widgets.swift) -->
-    <key>AppGroupIdentifier</key>
-    <string>group.com.giaphaos.family.gp2wq9xk</string>
+    <!-- Nhúng lúc build qua xcodebuild SUPABASE_URL=/SUPABASE_ANON_KEY=
+         (xem .github/workflows/build-ipa-esign.yml) — widget đọc qua
+         Bundle.main.object(forInfoDictionaryKey:) trong widgets.swift. -->
+    <key>SupabaseURL</key>
+    <string>$(SUPABASE_URL)</string>
+    <key>SupabaseAnonKey</key>
+    <string>$(SUPABASE_ANON_KEY)</string>
   </dict>
 </plist>

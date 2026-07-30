@@ -5,7 +5,6 @@ type Extra = {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   siteName?: string;
-  appGroup?: string;
 };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
@@ -27,11 +26,5 @@ export const SUPABASE_ANON_KEY =
 
 export const SITE_NAME =
   extra.siteName || process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả OS";
-
-/** App Group dùng chung giữa app chính và Widget — phải khớp app.config.js */
-export const APP_GROUP =
-  extra.appGroup ||
-  process.env.EXPO_PUBLIC_APP_GROUP ||
-  "group.com.giaphaos.family.gp2wq9xk";
 
 export const HAS_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
