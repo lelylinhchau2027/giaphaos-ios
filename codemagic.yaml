@@ -14,7 +14,7 @@ workflows:
     environment:
       vars:
         EXPO_PUBLIC_WEB_URL: https://giapha-os.homielab.com
-        EXPO_PUBLIC_SITE_NAME: Gia Phả OS
+        EXPO_PUBLIC_SITE_NAME: Gia Phả Họ Lê
         IOS_BUNDLE_ID: com.giaphaos.family
         EXPO_PUBLIC_APP_GROUP: group.com.giaphaos.family
         # Thêm trong UI Codemagic (Environment variables) nếu muốn widget:

@@ -79,7 +79,7 @@ export default function SettingsRoute() {
         style={styles.input}
         value={siteName}
         onChangeText={setSiteName}
-        placeholder="Gia Phả OS"
+        placeholder="Gia Phả Họ Lê"
         placeholderTextColor={colors.textSoft}
       />
 

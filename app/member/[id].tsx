@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { Image } from "expo-image";
+import GenderBadge from "../../src/components/GenderBadge";
 import RelationshipManager from "../../src/components/RelationshipManager";
 import { useFamilyData } from "../../src/context/FamilyDataContext";
 import { deletePerson } from "../../src/services/supabaseData";
@@ -75,19 +76,28 @@ export default function MemberDetailScreen() {
   return (
     <ScrollView contentContainerStyle={styles.body}>
       <View style={styles.hero}>
-        <View style={[styles.avatar, { backgroundColor: genderBg(person.gender) }]}>
-          {person.avatar_url ? (
-            <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
-          ) : (
-            <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
-              {person.full_name.charAt(0)}
-            </Text>
-          )}
+        <View style={styles.avatarWrap}>
+          <View style={[styles.avatar, { backgroundColor: genderBg(person.gender) }]}>
+            {person.avatar_url ? (
+              <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
+            ) : (
+              <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
+                {person.full_name.charAt(0)}
+              </Text>
+            )}
+          </View>
+          <GenderBadge gender={person.gender} size={22} />
         </View>
         <Text style={styles.name}>{person.full_name}</Text>
         <Text style={styles.meta}>
           {genderLabel(person.gender)}
-          {person.is_in_law ? " · Dâu/Rể" : ""}
+          {person.is_in_law
+            ? person.gender === "male"
+              ? " · Rể"
+              : person.gender === "female"
+                ? " · Dâu"
+                : " · Dâu/Rể"
+            : ""}
           {person.is_deceased ? " · Đã mất" : ""}
         </Text>
         <View style={styles.badges}>
@@ -163,6 +173,7 @@ const styles = StyleSheet.create({
   link: { color: colors.amberDark, fontWeight: "700" },
   body: { padding: 16, paddingBottom: 48 },
   hero: { alignItems: "center", marginBottom: 16 },
+  avatarWrap: { width: 88, height: 88 },
   avatar: {
     width: 88,
     height: 88,

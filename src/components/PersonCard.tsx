@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { Person } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
 import { formatYmd, genderLabel } from "../utils/format";
+import GenderBadge from "./GenderBadge";
 
 type Props = {
   person: Person;
@@ -18,14 +19,17 @@ export default function PersonCard({ person, onPress, compact, role }: Props) {
       onPress={onPress}
       style={[styles.card, compact && styles.compact]}
     >
-      <View style={[styles.avatar, { backgroundColor: genderBg(person.gender) }]}>
-        {person.avatar_url ? (
-          <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
-        ) : (
-          <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
-            {initial}
-          </Text>
-        )}
+      <View style={styles.avatarWrap}>
+        <View style={[styles.avatar, { backgroundColor: genderBg(person.gender) }]}>
+          {person.avatar_url ? (
+            <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
+          ) : (
+            <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
+              {initial}
+            </Text>
+          )}
+        </View>
+        <GenderBadge gender={person.gender} />
       </View>
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={1}>
@@ -53,7 +57,15 @@ export default function PersonCard({ person, onPress, compact, role }: Props) {
             {person.birth_order != null && (
               <Text style={styles.badge}>Con thứ {person.birth_order}</Text>
             )}
-            {person.is_in_law && <Text style={styles.badgeWarn}>Dâu/Rể</Text>}
+            {person.is_in_law && (
+              <Text style={styles.badgeWarn}>
+                {person.gender === "male"
+                  ? "Rể"
+                  : person.gender === "female"
+                    ? "Dâu"
+                    : "Dâu/Rể"}
+              </Text>
+            )}
           </View>
         )}
       </View>
@@ -73,6 +85,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   compact: { padding: 10, marginBottom: 6 },
+  avatarWrap: { width: 48, height: 48 },
   avatar: {
     width: 48,
     height: 48,

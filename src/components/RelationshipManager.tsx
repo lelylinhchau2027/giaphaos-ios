@@ -153,6 +153,17 @@ export default function RelationshipManager({
     }
   };
 
+  const typeLabel = (type: string) => {
+    switch (type) {
+      case "adopted_child":
+        return "Nuôi";
+      case "biological_child":
+        return "Ruột";
+      default:
+        return null;
+    }
+  };
+
   const linkPerson = async (target: Person) => {
     setBusy(true);
     try {
@@ -251,7 +262,7 @@ export default function RelationshipManager({
               <Text style={styles.itemName}>{item.target.full_name}</Text>
               <Text style={styles.itemMeta}>
                 {dirLabel(item.direction)}
-                {item.type !== "marriage" ? ` · ${item.type}` : ""}
+                {typeLabel(item.type) === "Nuôi" ? ` · ${typeLabel(item.type)}` : ""}
                 {item.note ? ` · ${item.note}` : ""}
               </Text>
             </Pressable>

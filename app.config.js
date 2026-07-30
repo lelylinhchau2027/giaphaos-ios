@@ -19,7 +19,7 @@ function withoutPushEntitlement(config) {
 
 /** @type {import('expo/config').ExpoConfig} */
 module.exports = {
-  name: "Gia Phả OS",
+  name: "Gia Phả Họ Lê",
   slug: "giaphaos",
   version: "1.0.0",
   orientation: "portrait",
@@ -91,7 +91,7 @@ module.exports = {
     webUrl: process.env.EXPO_PUBLIC_WEB_URL || "https://giapha-os.homielab.com",
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL || "",
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "",
-    siteName: process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả OS",
+    siteName: process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả Họ Lê",
     eas: {
       projectId: process.env.EAS_PROJECT_ID || "",
     },

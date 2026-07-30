@@ -14,7 +14,7 @@ import { getSupabase } from "./supabaseClient";
 /** Widget shows a wider window so it is not always empty. */
 export const WIDGET_EVENT_DAYS = 45;
 /** Notifications stay focused on the near term. */
-export const NOTIF_EVENT_DAYS = 14;
+export const NOTIF_EVENT_DAYS = 7;
 
 /** Widget kind must match Swift `GiaPhaWidget.kind`. */
 const WIDGET_KIND = "GiaPhaWidget";

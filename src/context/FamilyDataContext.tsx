@@ -51,7 +51,7 @@ export function FamilyDataProvider({ children }: { children: React.ReactNode }) 
   const [config, setConfig] = useState<RuntimeConfig>({
     supabaseUrl: "",
     supabaseAnonKey: "",
-    siteName: "Gia Phả OS",
+    siteName: "Gia Phả Họ Lê",
   });
   const [persons, setPersons] = useState<Person[]>([]);
   const [relationships, setRelationships] = useState<Relationship[]>([]);

@@ -25,7 +25,7 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
     return {
       supabaseUrl: (url || BUILT_IN_URL || "").replace(/\/$/, ""),
       supabaseAnonKey: anon || BUILT_IN_ANON || "",
-      siteName: site || BUILT_IN_SITE_NAME || "Gia Phả OS",
+      siteName: site || BUILT_IN_SITE_NAME || "Gia Phả Họ Lê",
     };
   } catch {
     return {
@@ -45,7 +45,7 @@ export async function saveRuntimeConfig(
       .trim()
       .replace(/\/$/, ""),
     supabaseAnonKey: (partial.supabaseAnonKey ?? current.supabaseAnonKey).trim(),
-    siteName: (partial.siteName ?? current.siteName).trim() || "Gia Phả OS",
+    siteName: (partial.siteName ?? current.siteName).trim() || "Gia Phả Họ Lê",
   };
   await Promise.all([
     next.supabaseUrl

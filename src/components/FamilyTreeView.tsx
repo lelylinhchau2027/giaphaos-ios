@@ -19,6 +19,7 @@ import Animated, {
 import { getChildren, getSpouses, pickDefaultRootId } from "../domain/treeRoot";
 import type { Person, Relationship } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
+import GenderBadge from "./GenderBadge";
 
 type Props = {
   persons: Person[];
@@ -70,19 +71,22 @@ function TreePersonCard({
         </View>
       ) : null}
 
-      <View
-        style={[
-          styles.avatar,
-          { backgroundColor: genderBg(person.gender) },
-        ]}
-      >
-        {person.avatar_url ? (
-          <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
-        ) : (
-          <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
-            {initial}
-          </Text>
-        )}
+      <View style={styles.avatarWrap}>
+        <View
+          style={[
+            styles.avatar,
+            { backgroundColor: genderBg(person.gender) },
+          ]}
+        >
+          {person.avatar_url ? (
+            <Image source={{ uri: person.avatar_url }} style={styles.avatarImg} />
+          ) : (
+            <Text style={[styles.avatarText, { color: genderColor(person.gender) }]}>
+              {initial}
+            </Text>
+          )}
+        </View>
+        <GenderBadge gender={person.gender} size={14} />
       </View>
 
       <Text style={styles.cardName} numberOfLines={2}>
@@ -248,18 +252,10 @@ export default function FamilyTreeView({
 
   const rootPerson = effectiveRoot ? personsMap.get(effectiveRoot) : null;
 
-  const roots = useMemo(() => {
-    const childIds = new Set(
-      relationships
-        .filter(
-          (r) => r.type === "biological_child" || r.type === "adopted_child",
-        )
-        .map((r) => r.person_b),
-    );
-    return persons
-      .filter((p) => !childIds.has(p.id) && !p.is_in_law)
-      .sort((a, b) => a.full_name.localeCompare(b.full_name, "vi"));
-  }, [persons, relationships]);
+  const roots = useMemo(
+    () => [...persons].sort((a, b) => a.full_name.localeCompare(b.full_name, "vi")),
+    [persons],
+  );
 
   const filteredRoots = useMemo(() => {
     if (!searchQuery) return roots;
@@ -427,17 +423,20 @@ export default function FamilyTreeView({
       {/* Fixed frame — tree stays inside tab area (like web TransformWrapper) */}
       <View style={styles.frame}>
         <GestureDetector gesture={composed}>
-          <Animated.View style={[styles.canvas, animStyle]}>
-            <TreeNode
-              person={rootPerson}
-              personsMap={personsMap}
-              relationships={relationships}
-              visited={new Set()}
-              onPressPerson={onPressPerson}
-              hideSpouses={hideSpouses}
-              hideMales={hideMales}
-              hideFemales={hideFemales}
-            />
+          {/* Fills the whole frame so pan/pinch respond anywhere, not just over a card */}
+          <Animated.View style={styles.gestureLayer}>
+            <Animated.View style={[styles.canvas, animStyle]}>
+              <TreeNode
+                person={rootPerson}
+                personsMap={personsMap}
+                relationships={relationships}
+                visited={new Set()}
+                onPressPerson={onPressPerson}
+                hideSpouses={hideSpouses}
+                hideMales={hideMales}
+                hideFemales={hideFemales}
+              />
+            </Animated.View>
           </Animated.View>
         </GestureDetector>
       </View>
@@ -597,11 +596,15 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     overflow: "hidden",
   },
+  gestureLayer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   canvas: {
     padding: 28,
     paddingTop: 36,
     alignItems: "center",
-    minWidth: "100%",
   },
 
   /* —— tree geometry (CSS-tree equivalent) —— */
@@ -699,6 +702,7 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: -1,
   },
+  avatarWrap: { width: 44, height: 44, marginBottom: 6 },
   avatar: {
     width: 44,
     height: 44,
@@ -708,7 +712,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     borderWidth: 2,
     borderColor: colors.white,
-    marginBottom: 6,
   },
   avatarImg: { width: 44, height: 44 },
   avatarText: { fontSize: 16, fontWeight: "800" },

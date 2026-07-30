@@ -25,6 +25,6 @@ export const SUPABASE_ANON_KEY =
   "";
 
 export const SITE_NAME =
-  extra.siteName || process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả OS";
+  extra.siteName || process.env.EXPO_PUBLIC_SITE_NAME || "Gia Phả Họ Lê";
 
 export const HAS_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);

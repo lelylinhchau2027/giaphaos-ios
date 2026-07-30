@@ -4,7 +4,7 @@ import { colors } from "../src/theme";
 export default function AboutScreen() {
   return (
     <ScrollView contentContainerStyle={styles.body}>
-      <Text style={styles.title}>Gia Phả OS</Text>
+      <Text style={styles.title}>Gia Phả Họ Lê</Text>
       <Text style={styles.p}>
         Ứng dụng quản lý gia phả native cho iOS — danh sách, cây gia phả,
         mindmap, sự kiện (sinh nhật / giỗ âm), tra cứu danh xưng, thống kê, sao
