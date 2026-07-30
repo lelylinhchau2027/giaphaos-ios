@@ -12,9 +12,14 @@ public class WidgetBridgeModule: Module {
     if logMessages.count > maxLogs { logMessages.removeFirst() }
   }
 
-  /// Tự lấy App Group từ Bundle Identifier để tương thích với mọi Bundle ID
-  /// khi build hoặc ký lại qua ESign.
+  /// Đọc App Group từ Info.plist (khớp `appGroup` trong app.config.js) —
+  /// KHÔNG suy ra từ bundle identifier, vì App Group không nhất thiết theo
+  /// mẫu `group.<bundleId>`.
   private static var appGroupId: String {
+    if let fromPlist = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
+       !fromPlist.isEmpty {
+      return fromPlist
+    }
     let bundleId = Bundle.main.bundleIdentifier ?? "com.giaphaos.family"
     let baseId = bundleId.replacingOccurrences(of: ".widget", with: "")
     return "group.\(baseId)"

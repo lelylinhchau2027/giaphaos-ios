@@ -4,16 +4,18 @@ import SwiftUI
 // MARK: - Shared data (App Group)
 
 private enum AppGroupStore {
-    /// Tự động lấy App Group động từ Bundle Identifier để tương thích với mọi Bundle ID khi build hoặc ký ESign
+    /// Đọc App Group từ Info.plist (khớp `appGroup` trong app.config.js) —
+    /// KHÔNG suy ra từ bundle identifier, vì App Group không nhất thiết
+    /// theo mẫu `group.<bundleId>`.
     static var suiteName: String {
+        if let fromPlist = Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier") as? String,
+           !fromPlist.isEmpty {
+            return fromPlist
+        }
         guard let bundleId = Bundle.main.bundleIdentifier else {
             return "group.com.giaphaos.family"
         }
-        
-        // Loại bỏ suffix .widget để lấy ID chính
         let baseId = bundleId.replacingOccurrences(of: ".widget", with: "")
-        
-        // Đảm bảo prefix group.
         if baseId.hasPrefix("group.") {
             return baseId
         }

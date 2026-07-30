@@ -88,20 +88,23 @@ jobs:
 
       - name: Write build env
         run: |
+          # EXPO_PUBLIC_APP_GROUP is intentionally NOT set here — app.config.js
+          # has its own fixed, hard-to-collide default (not derived from
+          # bundle_id). Overriding it per-bundle-id was the mechanism that
+          # kept regenerating `group.<bundle_id>`, which risks colliding with
+          # an App Group already registered under a different Apple ID.
           cat > .env << EOF
           EXPO_PUBLIC_WEB_URL=${{ inputs.web_url }}
           EXPO_PUBLIC_SUPABASE_URL=${{ inputs.supabase_url }}
           EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ inputs.supabase_anon_key }}
           EXPO_PUBLIC_SITE_NAME=Gia Phả OS
           IOS_BUNDLE_ID=${{ inputs.bundle_id }}
-          EXPO_PUBLIC_APP_GROUP=group.${{ inputs.bundle_id }}
           EOF
           # Export for subsequent steps
           echo "EXPO_PUBLIC_WEB_URL=${{ inputs.web_url }}" >> "$GITHUB_ENV"
           echo "EXPO_PUBLIC_SUPABASE_URL=${{ inputs.supabase_url }}" >> "$GITHUB_ENV"
           echo "EXPO_PUBLIC_SUPABASE_ANON_KEY=${{ inputs.supabase_anon_key }}" >> "$GITHUB_ENV"
           echo "IOS_BUNDLE_ID=${{ inputs.bundle_id }}" >> "$GITHUB_ENV"
-          echo "EXPO_PUBLIC_APP_GROUP=group.${{ inputs.bundle_id }}" >> "$GITHUB_ENV"
           echo "EXPO_PUBLIC_SITE_NAME=Gia Phả OS" >> "$GITHUB_ENV"
           echo "CI=1" >> "$GITHUB_ENV"
 
