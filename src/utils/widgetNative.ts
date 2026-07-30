@@ -1,29 +1,30 @@
-import { NativeModules } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
-const { WidgetBridge } = NativeModules;
+type WidgetBridgeModule = {
+  reloadAllTimelines: () => void;
+  saveWidgetData: (data: string) => void;
+  saveWidgetInfo: (info: Record<string, string | number>) => void;
+  getWidgetLogs: () => string;
+};
+
+const WidgetBridge = requireOptionalNativeModule<WidgetBridgeModule>('WidgetBridge');
 
 export function reloadWidgets() {
-  if (WidgetBridge && typeof WidgetBridge.reloadAllTimelines === 'function') {
-    WidgetBridge.reloadAllTimelines();
-  }
+  WidgetBridge?.reloadAllTimelines();
 }
 
 export function saveWidgetData(data: string) {
-  if (WidgetBridge && typeof WidgetBridge.saveWidgetData === 'function') {
-    WidgetBridge.saveWidgetData(data);
-  }
+  WidgetBridge?.saveWidgetData(data);
 }
 
 export function saveWidgetInfo(info: Record<string, string | number>) {
-  if (WidgetBridge && typeof WidgetBridge.saveWidgetInfo === 'function') {
-    WidgetBridge.saveWidgetInfo(info);
-  }
+  WidgetBridge?.saveWidgetInfo(info);
 }
 
 export function getWidgetLogs(callback: (logs: string) => void) {
-  if (WidgetBridge && typeof WidgetBridge.getWidgetLogs === 'function') {
-    WidgetBridge.getWidgetLogs(callback);
-  } else {
+  if (!WidgetBridge) {
     callback("WidgetBridge not available");
+    return;
   }
+  callback(WidgetBridge.getWidgetLogs());
 }
