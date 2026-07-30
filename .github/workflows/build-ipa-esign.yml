@@ -164,12 +164,15 @@ jobs:
 
           # Stream full log + keep a compact error summary on failure
           set -o pipefail
-          # Ký ad-hoc (identity "-", không cần cert/profile thật) thay vì tắt
-          # hẳn code signing. Mục đích: nhúng đúng entitlements (đặc biệt là
-          # App Group group.<bundle_id>) vào chữ ký ad-hoc của .app/.appex.
-          # Nếu build hoàn toàn unsigned (CODE_SIGN_ENTITLEMENTS=""), ESign
-          # không có cách nào biết app cần App Group để cấp lại khi ký bằng
-          # chứng chỉ cá nhân — đây chính là lý do widget không đồng bộ được.
+          # Build hoàn toàn unsigned. Xcode/SDK iOS 26.2 đã BỎ hỗ trợ ký
+          # "Ad Hoc" (CODE_SIGN_IDENTITY="-") cho build thiết bị iOS — dùng
+          # giá trị đó làm build fail với lỗi "Ad Hoc code signing is not
+          # allowed with SDK 'iOS 26.2'" trên mọi target (kể cả Pods).
+          # ESign không cần binary được ký sẵn để biết app cần App Group —
+          # nó đọc từ các file *.entitlements trong source project
+          # (ios/GiaPhOS/GiaPhOS.entitlements,
+          # ios/.targets/GiaPhaWidget/generated.entitlements), không phải
+          # từ chữ ký nhúng trong .app/.appex lúc CI build.
           if ! xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -177,10 +180,10 @@ jobs:
             -sdk iphoneos \
             -derivedDataPath "$DERIVED" \
             -destination "generic/platform=iOS" \
-            CODE_SIGNING_ALLOWED=YES \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
@@ -194,13 +197,17 @@ jobs:
 
           echo "DERIVED=$DERIVED" >> "$GITHUB_ENV"
 
-      - name: Verify entitlements embedded (debug)
+      - name: Verify entitlements (debug)
         run: |
           set -euo pipefail
+          echo "=== Embedded signature (expected empty — build is unsigned) ==="
           for BUNDLE in $(find "$DERIVED/Build/Products" -maxdepth 3 -type d \( -name "*.app" -o -name "*.appex" \)); do
-            echo "=== $BUNDLE ==="
-            codesign -d --entitlements :- "$BUNDLE" 2>&1 || echo "(no entitlements found)"
+            echo "--- $BUNDLE ---"
+            codesign -d --entitlements :- "$BUNDLE" 2>&1 || echo "(unsigned, as expected)"
           done
+          echo ""
+          echo "=== Source entitlements files (what ESign should grant) ==="
+          find . -name "*.entitlements" -exec sh -c 'echo "--- {} ---"; cat "{}"; echo' \;
 
       - name: Package IPA
         run: |
