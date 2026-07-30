@@ -1,5 +1,22 @@
+const { withEntitlementsPlist } = require("expo/config-plugins");
+
 const bundleId = process.env.IOS_BUNDLE_ID || "com.giaphaos.family";
 const appGroup = process.env.EXPO_PUBLIC_APP_GROUP || `group.${bundleId}`;
+
+/**
+ * App chỉ dùng local notifications (không có remote push token nào được
+ * đăng ký) nhưng plugin "expo-notifications" luôn tự thêm entitlement
+ * `aps-environment`. Entitlement này (dev lẫn production) đòi hỏi tài khoản
+ * Apple Developer trả phí — chứng chỉ cá nhân dùng để ký lại qua ESign
+ * không cấp được, và việc xin nó thất bại có thể khiến App Group cũng
+ * không được cấp theo. Xoá nó đi sau khi plugin expo-notifications chạy.
+ */
+function withoutPushEntitlement(config) {
+  return withEntitlementsPlist(config, (config) => {
+    delete config.modResults["aps-environment"];
+    return config;
+  });
+}
 
 /** @type {import('expo/config').ExpoConfig} */
 module.exports = {
@@ -23,7 +40,6 @@ module.exports = {
     appleTeamId: process.env.IOS_APPLE_TEAM_ID || undefined,
     infoPlist: {
       CFBundleDisplayName: "Gia Phả",
-      UIBackgroundModes: ["remote-notification"],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: false,
       },
@@ -45,13 +61,17 @@ module.exports = {
   plugins: [
     "expo-router",
     "expo-splash-screen",
+    // Đăng ký TRƯỚC "expo-notifications": Expo áp dụng các mod ios.entitlements
+    // theo thứ tự ngược (plugin đăng ký sau chạy trước), nên plugin xoá
+    // aps-environment phải đứng trước plugin thêm nó thì mới chạy SAU và có
+    // tác dụng thật sự.
+    withoutPushEntitlement,
     [
       "expo-notifications",
       {
         icon: "./assets/icon.png",
         color: "#d97706",
         sounds: [],
-        mode: "production",
       },
     ],
     [

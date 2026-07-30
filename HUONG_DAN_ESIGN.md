@@ -68,6 +68,7 @@ Nếu GitHub hỏi login: dùng **Personal Access Token** thay mật khẩu
    - ESign có thể **đổi** theo cert — OK  
 5. Widget (nếu hiện): `….widget` + App Group `group.…`  
    - Cert không hỗ trợ → bỏ qua; **app web vẫn chạy**  
+   
 6. **Ký và cài đặt**  
 7. Mở app **1 lần** → cho phép thông báo  
 

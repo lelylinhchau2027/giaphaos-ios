@@ -64,8 +64,7 @@ private enum AppGroupStore {
     /// Read events from App Group — prefers File (JSON), falls back to UserDefaults.
     static var events: [WidgetEvent] {
         // 1) Try reading from FileManager (robust)
-        let appGroupId = "group.com.giaphaos.family"
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) {
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName) {
             let fileURL = containerURL.appendingPathComponent("events.json")
             if let data = try? Data(contentsOf: fileURL),
                let list = decodeEvents(data) {

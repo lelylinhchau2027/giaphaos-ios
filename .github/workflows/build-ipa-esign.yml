@@ -164,6 +164,12 @@ jobs:
 
           # Stream full log + keep a compact error summary on failure
           set -o pipefail
+          # Ký ad-hoc (identity "-", không cần cert/profile thật) thay vì tắt
+          # hẳn code signing. Mục đích: nhúng đúng entitlements (đặc biệt là
+          # App Group group.<bundle_id>) vào chữ ký ad-hoc của .app/.appex.
+          # Nếu build hoàn toàn unsigned (CODE_SIGN_ENTITLEMENTS=""), ESign
+          # không có cách nào biết app cần App Group để cấp lại khi ký bằng
+          # chứng chỉ cá nhân — đây chính là lý do widget không đồng bộ được.
           if ! xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -171,10 +177,10 @@ jobs:
             -sdk iphoneos \
             -derivedDataPath "$DERIVED" \
             -destination "generic/platform=iOS" \
-            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_ALLOWED=YES \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="-" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
@@ -187,6 +193,14 @@ jobs:
           fi
 
           echo "DERIVED=$DERIVED" >> "$GITHUB_ENV"
+
+      - name: Verify entitlements embedded (debug)
+        run: |
+          set -euo pipefail
+          for BUNDLE in $(find "$DERIVED/Build/Products" -maxdepth 3 -type d \( -name "*.app" -o -name "*.appex" \)); do
+            echo "=== $BUNDLE ==="
+            codesign -d --entitlements :- "$BUNDLE" 2>&1 || echo "(no entitlements found)"
+          done
 
       - name: Package IPA
         run: |
