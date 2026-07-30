@@ -14,6 +14,12 @@ export function saveWidgetData(data: string) {
   }
 }
 
+export function saveWidgetInfo(info: Record<string, string | number>) {
+  if (WidgetBridge && typeof WidgetBridge.saveWidgetInfo === 'function') {
+    WidgetBridge.saveWidgetInfo(info);
+  }
+}
+
 export function getWidgetLogs(callback: (logs: string) => void) {
   if (WidgetBridge && typeof WidgetBridge.getWidgetLogs === 'function') {
     WidgetBridge.getWidgetLogs(callback);

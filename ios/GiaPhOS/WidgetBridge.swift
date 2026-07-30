@@ -52,6 +52,26 @@ class WidgetBridge: NSObject {
     }
   }
 
+  /// Ghi trực tiếp các trường widget (memberCount, hasKey, siteName, ...)
+  /// vào UserDefaults(suiteName:) qua cầu nối native đã xác nhận hoạt động,
+  /// thay vì phụ thuộc `@bacons/apple-targets`'s ExtensionStorage — thư viện
+  /// đó fallback về no-op im lặng (không throw) nếu module Expo không được
+  /// autolink đúng trong bản build, khiến JS tưởng đã ghi thành công.
+  @objc
+  func saveWidgetInfo(_ info: NSDictionary) {
+    let group = self.appGroupId
+    guard let defaults = UserDefaults(suiteName: group) else {
+      WidgetBridge.addLog("saveWidgetInfo: FAILED to open UserDefaults suite \(group)")
+      return
+    }
+    for (key, value) in info {
+      guard let k = key as? String else { continue }
+      defaults.set(value, forKey: k)
+    }
+    let readBack = defaults.object(forKey: "memberCount")
+    WidgetBridge.addLog("saveWidgetInfo: wrote \(info.count) keys to \(group). Readback memberCount=\(String(describing: readBack))")
+  }
+
   @objc
   func getWidgetLogs(_ callback: RCTResponseSenderBlock) {
     callback([WidgetBridge.logMessages.joined(separator: "\n")])

@@ -10,7 +10,11 @@ import { computeUpcomingEvents } from "./events";
 import { scheduleEventNotifications } from "./notifications";
 import { loadRuntimeConfig } from "./settings";
 import { fetchFamilyData, hasConfig } from "./supabaseData";
-import { reloadWidgets, saveWidgetData } from "../utils/widgetNative";
+import {
+  reloadWidgets,
+  saveWidgetData,
+  saveWidgetInfo,
+} from "../utils/widgetNative";
 
 /** Widget shows a wider window so it is not always empty. */
 export const WIDGET_EVENT_DAYS = 45;
@@ -45,6 +49,28 @@ function writeWidgetPayload(
 ) {
   try {
     console.log("DEBUG: Writing to App Group, siteName:", payload.siteName);
+
+    const json = JSON.stringify(payload.events.map(toWidgetEvent));
+
+    // Primary path: our own native bridge (plain RCTBridgeModule), which we
+    // can verify via getWidgetLogs(). @bacons/apple-targets's ExtensionStorage
+    // silently no-ops (no throw) if its Expo Module isn't autolinked in a
+    // given build, which made failures invisible — route the real writes
+    // through WidgetBridge instead.
+    saveWidgetInfo({
+      siteName: payload.siteName,
+      memberCount: payload.memberCount,
+      updatedAt: payload.updatedAt,
+      windowDays: payload.windowDays ?? WIDGET_EVENT_DAYS,
+      hasKey: payload.hasKey ? 1 : 0,
+      syncError: payload.syncError ?? "",
+      eventsJson: json,
+      ...(payload.supabaseUrl ? { supabaseUrl: payload.supabaseUrl } : {}),
+    });
+    saveWidgetData(json);
+
+    // Legacy path — kept as a harmless fallback in case ExtensionStorage
+    // does work in this build.
     storage.set("siteName", payload.siteName);
     storage.set("memberCount", payload.memberCount);
     storage.set("updatedAt", payload.updatedAt);
@@ -54,14 +80,6 @@ function writeWidgetPayload(
     if (payload.supabaseUrl) {
       storage.set("supabaseUrl", payload.supabaseUrl);
     }
-
-    // String JSON — Swift reads via string(forKey:)
-    const json = JSON.stringify(payload.events.map(toWidgetEvent));
-    
-    // NEW: Use native file writer for robustness
-    saveWidgetData(json);
-    
-    // Legacy storage
     storage.set("eventsJson", json);
 
     ExtensionStorage.reloadWidget(WIDGET_KIND);

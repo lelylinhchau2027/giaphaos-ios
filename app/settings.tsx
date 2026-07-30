@@ -13,6 +13,7 @@ import { useFamilyData } from "../src/context/FamilyDataContext";
 import { getBuiltInSupabase } from "../src/services/settings";
 import { APP_GROUP } from "../src/config";
 import { colors } from "../src/theme";
+import { getWidgetLogs } from "../src/utils/widgetNative";
 
 export default function SettingsRoute() {
   const { config, saveConfig, syncNative, lastSync, persons, customEvents } =
@@ -44,6 +45,17 @@ export default function SettingsRoute() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const onViewWidgetLogs = () => {
+    getWidgetLogs((logs) => {
+      Alert.alert(
+        "Log widget (debug)",
+        logs && logs.trim().length > 0
+          ? logs
+          : "(Chưa có log — bấm 'Đồng bộ widget ngay' trước)",
+      );
+    });
   };
 
   const onSyncWidget = async () => {
@@ -142,6 +154,9 @@ export default function SettingsRoute() {
           Sau khi sync: gỡ widget khỏi màn hình chính → thêm lại widget “Gia
           Phả”. ESign phải giữ App Group {APP_GROUP}.
         </Text>
+        <Pressable style={styles.btnLogs} onPress={onViewWidgetLogs}>
+          <Text style={styles.btnLogsText}>Xem log widget (debug)</Text>
+        </Pressable>
       </View>
 
       <Text style={styles.migration}>
@@ -206,6 +221,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.amberSoft,
   },
   btnSyncText: { color: colors.amberDark, fontWeight: "800" },
+  btnLogs: {
+    marginTop: 8,
+    paddingVertical: 8,
+    alignItems: "center",
+  },
+  btnLogsText: {
+    color: colors.textSoft,
+    fontWeight: "700",
+    fontSize: 12,
+    textDecorationLine: "underline",
+  },
   syncTip: {
     marginTop: 10,
     fontSize: 11,
