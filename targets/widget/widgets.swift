@@ -30,6 +30,10 @@ private struct WidgetCacheRow: Decodable {
     let updated_at: String?
 }
 
+private struct WidgetFetchError: Error {
+    let message: String
+}
+
 private func decodeEvents(_ data: Data) -> [WidgetEvent]? {
     // Flexible decoder: tolerate missing optionals / extra fields
     if let list = try? JSONDecoder().decode([WidgetEvent].self, from: data) {
@@ -42,13 +46,13 @@ private func decodeEvents(_ data: Data) -> [WidgetEvent]? {
     return arr.compactMap { WidgetEvent(dict: $0) }
 }
 
-private func fetchWidgetCache(completion: @escaping (Result<WidgetCacheRow, String>) -> Void) {
+private func fetchWidgetCache(completion: @escaping (Result<WidgetCacheRow, WidgetFetchError>) -> Void) {
     guard SupabaseConfig.isConfigured, let base = URL(string: SupabaseConfig.url) else {
-        completion(.failure("Chưa cấu hình Supabase lúc build widget"))
+        completion(.failure(WidgetFetchError(message: "Chưa cấu hình Supabase lúc build widget")))
         return
     }
     guard var comps = URLComponents(url: base.appendingPathComponent("rest/v1/widget_cache"), resolvingAgainstBaseURL: false) else {
-        completion(.failure("Supabase URL không hợp lệ"))
+        completion(.failure(WidgetFetchError(message: "Supabase URL không hợp lệ")))
         return
     }
     comps.queryItems = [
@@ -57,7 +61,7 @@ private func fetchWidgetCache(completion: @escaping (Result<WidgetCacheRow, Stri
         URLQueryItem(name: "limit", value: "1"),
     ]
     guard let url = comps.url else {
-        completion(.failure("Supabase URL không hợp lệ"))
+        completion(.failure(WidgetFetchError(message: "Supabase URL không hợp lệ")))
         return
     }
     var req = URLRequest(url: url)
@@ -67,19 +71,19 @@ private func fetchWidgetCache(completion: @escaping (Result<WidgetCacheRow, Stri
 
     URLSession.shared.dataTask(with: req) { data, response, error in
         if let error = error {
-            completion(.failure("Lỗi mạng: \(error.localizedDescription)"))
+            completion(.failure(WidgetFetchError(message: "Lỗi mạng: \(error.localizedDescription)")))
             return
         }
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            completion(.failure("Supabase lỗi (HTTP \(http.statusCode)) — kiểm tra bảng widget_cache/RLS"))
+            completion(.failure(WidgetFetchError(message: "Supabase lỗi (HTTP \(http.statusCode)) — kiểm tra bảng widget_cache/RLS")))
             return
         }
         guard let data = data else {
-            completion(.failure("Không có dữ liệu trả về"))
+            completion(.failure(WidgetFetchError(message: "Không có dữ liệu trả về")))
             return
         }
         guard let rows = try? JSONDecoder().decode([WidgetCacheRow].self, from: data), let row = rows.first else {
-            completion(.failure("Mở app Gia Phả một lần để đồng bộ widget"))
+            completion(.failure(WidgetFetchError(message: "Mở app Gia Phả một lần để đồng bộ widget")))
             return
         }
         completion(.success(row))
@@ -240,7 +244,7 @@ struct Provider: TimelineProvider {
                     windowDays: 45,
                     statusNote: note
                 ))
-            case .failure(let message):
+            case .failure(let err):
                 completion(SimpleEntry(
                     date: Date(),
                     siteName: "Gia Phả OS",
@@ -248,7 +252,7 @@ struct Provider: TimelineProvider {
                     events: [],
                     updatedAt: "",
                     windowDays: 45,
-                    statusNote: message
+                    statusNote: err.message
                 ))
             }
         }
