@@ -8,16 +8,17 @@ import {
   TextInput,
   Modal,
   FlatList,
+  type LayoutChangeEvent,
 } from "react-native";
 import { Image } from "expo-image";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
+  Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withRepeat,
-  withSequence,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 import {
   computeEldestSonChain,
@@ -26,6 +27,7 @@ import {
   getSpouses,
   pickDefaultRootId,
   type ChildrenBranch,
+  type EldestSonChainEntry,
 } from "../domain/treeRoot";
 import type { Person, Relationship } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
@@ -41,54 +43,30 @@ const LINE = colors.stone200;
 const LINE_W = 2;
 const STEM_H = 22;
 const CARD_W = 88;
-/** Mỗi node (nodeCol) có marginHorizontal:6 hai bên → 12px giữa 2 anh em cạnh nhau. */
-const NODE_MARGIN = 12;
 
 const GOLD = colors.amberMid;
 const GOLD_GLOW = colors.amberDark;
-/** Độ trễ giữa mỗi đời khi "chạy" hiệu ứng trưởng nam — tạo cảm giác lan dần xuống. */
-const CHASE_PHASE_MS = 260;
-const CHASE_CYCLE_MS = 1500;
-
-/** Nhấp nháy tuần hoàn, lệch pha theo `depth` — dùng chung cho cả đường nối và viền thẻ. */
-function useChasePulse(active: boolean, depth: number) {
-  const progress = useSharedValue(0);
-  useEffect(() => {
-    if (!active) {
-      progress.value = 0;
-      return;
-    }
-    progress.value = withDelay(
-      Math.max(0, depth) * CHASE_PHASE_MS,
-      withRepeat(
-        withSequence(
-          withTiming(1, { duration: 320 }),
-          withTiming(0.25, { duration: CHASE_CYCLE_MS - 320 }),
-        ),
-        -1,
-        false,
-      ),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, depth]);
-  return progress;
-}
+/** Thời gian "đốm sáng" đi từ 1 đời sang đời kế tiếp. */
+const CHASE_STEP_MS = 550;
 
 /** Một đoạn line — vẽ tĩnh (màu xám) hoặc vàng nhấp nháy khi nằm trên chuỗi trưởng nam. */
 function TreeLine({
   style,
   highlighted,
   depth,
+  chaseProgress,
 }: {
   style: object;
   highlighted: boolean;
   depth: number;
+  chaseProgress: SharedValue<number> | null;
 }) {
-  const pulse = useChasePulse(highlighted, depth);
-  const animStyle = useAnimatedStyle(() => ({
-    backgroundColor: GOLD,
-    opacity: 0.45 + pulse.value * 0.55,
-  }));
+  const animStyle = useAnimatedStyle(() => {
+    if (!chaseProgress) return { backgroundColor: GOLD, opacity: 1 };
+    const dist = Math.abs(chaseProgress.value - depth);
+    const glow = Math.max(0, 1 - dist);
+    return { backgroundColor: GOLD, opacity: 0.35 + glow * 0.65 };
+  });
   if (!highlighted) return <View style={style} />;
   return <Animated.View style={[style, animStyle]} />;
 }
@@ -100,15 +78,22 @@ function TreePersonCard({
   showRing,
   showPlus,
   onPress,
+  onLayout,
   chaseDepth,
+  chaseProgress,
+  showEldestLabel,
 }: {
   person: Person;
   role?: string;
   showRing?: boolean;
   showPlus?: boolean;
   onPress: () => void;
-  /** Có mặt (>=0) khi thẻ này nằm trên chuỗi trưởng nam đang bật hiệu ứng. */
+  onLayout?: (e: LayoutChangeEvent) => void;
+  /** Có mặt (>=0) khi thẻ này (hoặc vợ/chồng của trưởng nam) cần sáng viền. */
   chaseDepth?: number;
+  chaseProgress?: SharedValue<number> | null;
+  /** Chỉ true cho đúng người con trai — không hiện trên thẻ vợ/chồng của họ. */
+  showEldestLabel?: boolean;
 }) {
   const initial = person.full_name?.charAt(0)?.toUpperCase() || "?";
   const age =
@@ -116,14 +101,19 @@ function TreePersonCard({
       ? new Date().getFullYear() - person.birth_year
       : null;
   const highlighted = chaseDepth != null;
-  const pulse = useChasePulse(highlighted, chaseDepth ?? 0);
-  const glowStyle = useAnimatedStyle(() => ({
-    opacity: 0.4 + pulse.value * 0.6,
-  }));
+  const depth = chaseDepth ?? 0;
+  const progress = chaseProgress ?? null;
+  const glowStyle = useAnimatedStyle(() => {
+    if (!progress) return { opacity: 1 };
+    const dist = Math.abs(progress.value - depth);
+    const glow = Math.max(0, 1 - dist);
+    return { opacity: 0.35 + glow * 0.65 };
+  });
 
   return (
     <Pressable
       onPress={onPress}
+      onLayout={onLayout}
       style={[
         styles.card,
         person.is_deceased && styles.cardDeceased,
@@ -183,7 +173,7 @@ function TreePersonCard({
             {person.gender === "male" ? "Rể" : person.gender === "female" ? "Dâu" : "Khách"}
           </Text>
         ) : null}
-        {highlighted ? <Text style={styles.metaPillGold}>👑 Trưởng nam</Text> : null}
+        {showEldestLabel ? <Text style={styles.metaPillGold}>👑 Trưởng nam</Text> : null}
       </View>
 
       {role ? <Text style={styles.roleText}>{role}</Text> : null}
@@ -209,8 +199,7 @@ type LayoutPlan =
 
 /**
  * Quyết định layout (1 khối gộp hay tách nhánh nhiều vợ/chồng) — dùng chung
- * bởi cả phần tính bề rộng (computeNodeWidth) lẫn phần render, để 2 bên luôn
- * khớp nhau tuyệt đối (không bị lệch nhánh nối do tính sai kích thước).
+ * bởi TreeNode để việc render nhất quán.
  */
 function planLayout(
   person: Person,
@@ -256,48 +245,15 @@ function planLayout(
   return { mode: "multi", rawSpouses, rowLeft, rowRight: rightSpouses, branches };
 }
 
-/**
- * Bề rộng (px) mà node này sẽ thực sự chiếm khi render — tính đệ quy bằng
- * đúng các hằng số layout (CARD_W, NODE_MARGIN) mà JSX bên dưới dùng, để suy
- * ra chính xác điểm giữa avatar cho nhánh nối nhiều vợ/chồng mà không cần đo
- * layout thật (tránh giật/lệch khung hình).
- */
-function computeNodeWidth(
-  person: Person,
-  personsMap: Map<string, Person>,
-  relationships: Relationship[],
-  hideSpouses: boolean,
-  hideMales: boolean,
-  hideFemales: boolean,
-  visited: Set<string>,
-): number {
-  if (visited.has(person.id)) return CARD_W;
-  const nextVisited = new Set(visited);
-  nextVisited.add(person.id);
-
-  const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
-
-  const widthOfKids = (kids: Person[]) =>
-    kids.reduce(
-      (sum, c) =>
-        sum +
-        computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
-        NODE_MARGIN,
-      0,
-    );
-
-  if (plan.mode === "single") {
-    if (plan.children.length === 0) return CARD_W;
-    return Math.max(CARD_W, widthOfKids(plan.children));
-  }
-
-  const coupleRowWidth = (plan.rawSpouses.length + 1) * CARD_W;
-  let branchesRowWidth = 0;
-  for (const b of plan.branches) {
-    if (b.children.length === 0) continue;
-    branchesRowWidth += widthOfKids(b.children) + NODE_MARGIN;
-  }
-  return Math.max(coupleRowWidth, branchesRowWidth);
+/** Gộp state đo layout kiểu {x,width} theo key, chỉ setState khi giá trị thực sự đổi. */
+function useMeasuredCenters() {
+  const [centers, setCenters] = useState<Record<string, number>>({});
+  const measure = (key: string) => (e: LayoutChangeEvent) => {
+    const { x, width } = e.nativeEvent.layout;
+    const center = x + width / 2;
+    setCenters((prev) => (prev[key] === center ? prev : { ...prev, [key]: center }));
+  };
+  return [centers, measure] as const;
 }
 
 type TreeNodeProps = {
@@ -309,8 +265,9 @@ type TreeNodeProps = {
   hideSpouses: boolean;
   hideMales: boolean;
   hideFemales: boolean;
-  /** id -> độ sâu trong chuỗi trưởng nam (null khi tính năng tắt). */
-  highlightChain: Map<string, number> | null;
+  /** id -> {depth, spouseId} trong chuỗi trưởng nam (null khi tính năng tắt). */
+  highlightChain: Map<string, EldestSonChainEntry> | null;
+  chaseProgress: SharedValue<number> | null;
 };
 
 function TreeNode({
@@ -323,13 +280,21 @@ function TreeNode({
   hideMales,
   hideFemales,
   highlightChain,
+  chaseProgress,
 }: TreeNodeProps) {
+  // Đo layout thực tế cho phần nối nhiều vợ/chồng — luôn gọi hook, chỉ dùng khi mode==='multi'.
+  const [cardCenters, measureCard] = useMeasuredCenters();
+  const [branchCenters, measureBranch] = useMeasuredCenters();
+  const [coupleBoxX, setCoupleBoxX] = useState(0);
+  const [coupleBoxHeight, setCoupleBoxHeight] = useState(0);
+  const [branchesRowX, setBranchesRowX] = useState(0);
+
   if (visited.has(person.id)) return null;
   const nextVisited = new Set(visited);
   nextVisited.add(person.id);
 
-  const myDepth = highlightChain?.get(person.id);
-  const isHighlighted = myDepth != null;
+  const myEntry = highlightChain?.get(person.id);
+  const isHighlighted = myEntry != null;
 
   const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
 
@@ -341,7 +306,11 @@ function TreeNode({
     hideMales,
     hideFemales,
     highlightChain,
+    chaseProgress,
   };
+
+  const spouseGlowDepth = (spouseId: string) =>
+    myEntry?.spouseId === spouseId ? myEntry.depth : undefined;
 
   /** Hàng con + line nối, không kèm stem phía trên (dùng khi cha đã tự vẽ stem riêng). */
   function renderKidsRow(kids: Person[]) {
@@ -351,8 +320,9 @@ function TreeNode({
           const isOnly = kids.length === 1;
           const isFirst = index === 0;
           const isLast = index === kids.length - 1;
-          const childDepth = highlightChain?.get(child.id);
-          const childHighlighted = childDepth != null;
+          const childEntry = highlightChain?.get(child.id);
+          const childHighlighted = childEntry != null;
+          const childDepth = childEntry?.depth ?? 0;
           return (
             <View key={child.id} style={styles.kidCol}>
               {isOnly ? (
@@ -360,7 +330,8 @@ function TreeNode({
                   <TreeLine
                     style={styles.vStub}
                     highlighted={childHighlighted}
-                    depth={childDepth ?? 0}
+                    depth={childDepth}
+                    chaseProgress={chaseProgress}
                   />
                 </View>
               ) : (
@@ -368,17 +339,20 @@ function TreeNode({
                   <TreeLine
                     style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
                     highlighted={childHighlighted && !isFirst}
-                    depth={childDepth ?? 0}
+                    depth={childDepth}
+                    chaseProgress={chaseProgress}
                   />
                   <TreeLine
                     style={styles.vStub}
                     highlighted={childHighlighted}
-                    depth={childDepth ?? 0}
+                    depth={childDepth}
+                    chaseProgress={chaseProgress}
                   />
                   <TreeLine
                     style={[styles.hArm, isLast ? styles.hArmHidden : null]}
                     highlighted={childHighlighted && !isLast}
-                    depth={childDepth ?? 0}
+                    depth={childDepth}
+                    chaseProgress={chaseProgress}
                   />
                 </View>
               )}
@@ -394,7 +368,12 @@ function TreeNode({
     if (kids.length === 0) return null;
     return (
       <View style={styles.kidsBlock}>
-        <TreeLine style={styles.parentStem} highlighted={isHighlighted} depth={myDepth ?? 0} />
+        <TreeLine
+          style={styles.parentStem}
+          highlighted={isHighlighted}
+          depth={myEntry?.depth ?? 0}
+          chaseProgress={chaseProgress}
+        />
         {renderKidsRow(kids)}
       </View>
     );
@@ -408,7 +387,9 @@ function TreeNode({
           <TreePersonCard
             person={person}
             onPress={() => onPressPerson(person)}
-            chaseDepth={myDepth}
+            chaseDepth={myEntry?.depth}
+            chaseProgress={chaseProgress}
+            showEldestLabel={isHighlighted}
           />
           {plan.spouses.map((s, idx) => (
             <TreePersonCard
@@ -418,6 +399,8 @@ function TreeNode({
               showRing={idx === 0}
               showPlus={idx > 0}
               onPress={() => onPressPerson(s)}
+              chaseDepth={spouseGlowDepth(s.id)}
+              chaseProgress={chaseProgress}
             />
           ))}
         </View>
@@ -429,13 +412,9 @@ function TreeNode({
 
   // >1 vợ/chồng: chồng/vợ giữa, các vợ/chồng còn lại xếp 2 bên; mỗi cuộc hôn
   // nhân có 1 nhánh nối riêng bắt đầu từ đúng điểm giữa 2 avatar của cặp đó.
+  // Vị trí đo bằng onLayout thật (không suy đoán bằng công thức) để luôn khớp.
   const { rawSpouses, rowLeft, rowRight, branches } = plan;
   const rowItems: Person[] = [...rowLeft, person, ...rowRight];
-  const personIndexInRow = rowLeft.length;
-  const coupleRowWidth = rowItems.length * CARD_W;
-
-  const rowIndexById = new Map<string, number>();
-  rowItems.forEach((p, i) => rowIndexById.set(p.id, i));
 
   const maleCount = rawSpouses.filter((s) => s.gender === "male").length;
   const femaleCount = rawSpouses.filter((s) => s.gender === "female").length;
@@ -454,64 +433,41 @@ function TreeNode({
     }
   }
 
-  type RenderBranch = {
-    key: string;
-    children: Person[];
-    topAnchorLocal: number;
-  };
-
+  type RenderBranch = { key: string; spouseId: string | null; children: Person[] };
   const orderedSpouses = [...rowLeft, ...rowRight];
   const renderBranches: RenderBranch[] = [];
   for (const spouse of orderedSpouses) {
     const branch = branches.find((b) => b.spouse?.id === spouse.id);
     if (!branch || branch.children.length === 0) continue;
-    const rowIdx = rowIndexById.get(spouse.id)!;
-    const topAnchorLocal = ((personIndexInRow + rowIdx + 1) / 2) * CARD_W;
-    renderBranches.push({ key: spouse.id, children: branch.children, topAnchorLocal });
+    renderBranches.push({ key: spouse.id, spouseId: spouse.id, children: branch.children });
   }
   const unassignedBranch = branches.find((b) => b.spouse === null);
   if (unassignedBranch && unassignedBranch.children.length > 0) {
-    renderBranches.push({
-      key: "unassigned",
-      children: unassignedBranch.children,
-      topAnchorLocal: personIndexInRow * CARD_W + CARD_W / 2,
-    });
+    renderBranches.push({ key: "unassigned", spouseId: null, children: unassignedBranch.children });
   }
-
-  const branchWidths = renderBranches.map((b) =>
-    b.children.reduce(
-      (sum, c) =>
-        sum +
-        computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
-        NODE_MARGIN,
-      0,
-    ),
-  );
-  const branchesRowWidth = branchWidths.reduce((a, w) => a + w + NODE_MARGIN, 0);
-  const outerWidth = Math.max(coupleRowWidth, branchesRowWidth);
-  const coupleRowOffset = (outerWidth - coupleRowWidth) / 2;
-  const branchesRowOffset = (outerWidth - branchesRowWidth) / 2;
-
-  let cursor = branchesRowOffset;
-  const bottomAnchors: number[] = [];
-  branchWidths.forEach((w) => {
-    cursor += NODE_MARGIN / 2;
-    bottomAnchors.push(cursor + w / 2);
-    cursor += w + NODE_MARGIN / 2;
-  });
 
   const BEND_Y = STEM_H / 2;
 
   return (
-    <View style={[styles.nodeCol, { width: outerWidth }]}>
-      <View style={[styles.coupleBox, { width: coupleRowWidth }]}>
+    <View style={styles.nodeCol}>
+      <View
+        style={styles.coupleBox}
+        onLayout={(e) => {
+          const { x, height } = e.nativeEvent.layout;
+          setCoupleBoxX((prev) => (prev === x ? prev : x));
+          setCoupleBoxHeight((prev) => (prev === height ? prev : height));
+        }}
+      >
         {rowItems.map((p) =>
           p.id === person.id ? (
             <TreePersonCard
               key={p.id}
               person={p}
               onPress={() => onPressPerson(p)}
-              chaseDepth={myDepth}
+              onLayout={measureCard(p.id)}
+              chaseDepth={myEntry?.depth}
+              chaseProgress={chaseProgress}
+              showEldestLabel={isHighlighted}
             />
           ) : (
             <TreePersonCard
@@ -519,6 +475,9 @@ function TreeNode({
               person={p}
               role={roleById.get(p.id)}
               onPress={() => onPressPerson(p)}
+              onLayout={measureCard(p.id)}
+              chaseDepth={spouseGlowDepth(p.id)}
+              chaseProgress={chaseProgress}
             />
           ),
         )}
@@ -526,19 +485,34 @@ function TreeNode({
 
       {renderBranches.length > 0 ? (
         <>
-          <View style={[styles.multiConnectorOverlay, { width: outerWidth, height: STEM_H }]}>
-            {renderBranches.map((b, idx) => {
-              const topX = coupleRowOffset + b.topAnchorLocal;
-              const botX = bottomAnchors[idx];
+          <View
+            style={[
+              styles.multiConnectorOverlay,
+              { top: coupleBoxHeight, height: STEM_H },
+            ]}
+            pointerEvents="none"
+          >
+            {coupleBoxHeight === 0
+              ? null
+              : renderBranches.map((b) => {
+              const personCenter = cardCenters[person.id];
+              const spouseCenter = b.spouseId ? cardCenters[b.spouseId] : undefined;
+              const branchCenter = branchCenters[b.key];
+              const topReady =
+                personCenter != null && (b.spouseId == null || spouseCenter != null);
+              if (!topReady || branchCenter == null) return null;
+
+              const topLocal = b.spouseId ? (personCenter + spouseCenter!) / 2 : personCenter!;
+              const topX = coupleBoxX + topLocal;
+              const botX = branchesRowX + branchCenter;
               const left = Math.min(topX, botX);
               const barWidth = Math.abs(botX - topX) + LINE_W;
-              const branchHighlighted = b.children.some(
-                (c) => highlightChain?.has(c.id),
-              );
+
+              const branchHighlighted = b.children.some((c) => highlightChain?.has(c.id));
               const branchDepth =
-                (highlightChain && b.children
-                  .map((c) => highlightChain.get(c.id))
-                  .find((d) => d != null)) ?? 0;
+                b.children
+                  .map((c) => highlightChain?.get(c.id)?.depth)
+                  .find((d) => d != null) ?? 0;
 
               return (
                 <View key={b.key} style={StyleSheet.absoluteFill} pointerEvents="none">
@@ -546,6 +520,7 @@ function TreeNode({
                     style={[styles.multiStub, { left: topX - LINE_W / 2, top: 0, height: BEND_Y }]}
                     highlighted={branchHighlighted}
                     depth={branchDepth}
+                    chaseProgress={chaseProgress}
                   />
                   <TreeLine
                     style={[
@@ -554,6 +529,7 @@ function TreeNode({
                     ]}
                     highlighted={branchHighlighted}
                     depth={branchDepth}
+                    chaseProgress={chaseProgress}
                   />
                   <TreeLine
                     style={[
@@ -562,15 +538,23 @@ function TreeNode({
                     ]}
                     highlighted={branchHighlighted}
                     depth={branchDepth}
+                    chaseProgress={chaseProgress}
                   />
                 </View>
               );
             })}
           </View>
 
-          <View style={[styles.multiBranchesRow, { width: branchesRowWidth }]}>
+          <View
+            style={styles.multiBranchesRow}
+            onLayout={(e) =>
+              setBranchesRowX((prev) =>
+                prev === e.nativeEvent.layout.x ? prev : e.nativeEvent.layout.x,
+              )
+            }
+          >
             {renderBranches.map((b) => (
-              <View key={b.key} style={styles.multiBranchCol}>
+              <View key={b.key} style={styles.multiBranchCol} onLayout={measureBranch(b.key)}>
                 {renderKidsRow(b.children)}
               </View>
             ))}
@@ -601,6 +585,7 @@ export default function FamilyTreeView({
   const ty = useSharedValue(0);
   const savedTx = useSharedValue(0);
   const savedTy = useSharedValue(0);
+  const chaseProgress = useSharedValue(0);
 
   const personsMap = useMemo(
     () => new Map(persons.map((p) => [p.id, p])),
@@ -618,6 +603,33 @@ export default function FamilyTreeView({
     if (!showEldestSon || !rootPerson) return null;
     return computeEldestSonChain(rootPerson.id, relationships, personsMap);
   }, [showEldestSon, rootPerson, relationships, personsMap]);
+
+  const maxChainDepth = useMemo(() => {
+    if (!highlightChain || highlightChain.size === 0) return 0;
+    let max = 0;
+    highlightChain.forEach((v) => {
+      if (v.depth > max) max = v.depth;
+    });
+    return max;
+  }, [highlightChain]);
+
+  // "Đốm sáng" vàng chạy liên tục từ đời gốc (0) đến đời cuối cùng của chuỗi, rồi lặp lại.
+  useEffect(() => {
+    if (!highlightChain || maxChainDepth === 0) {
+      chaseProgress.value = 0;
+      return;
+    }
+    chaseProgress.value = 0;
+    chaseProgress.value = withRepeat(
+      withTiming(maxChainDepth, {
+        duration: maxChainDepth * CHASE_STEP_MS,
+        easing: Easing.linear,
+      }),
+      -1,
+      false,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightChain, maxChainDepth]);
 
   const roots = useMemo(
     () => [...persons].sort((a, b) => a.full_name.localeCompare(b.full_name, "vi")),
@@ -813,6 +825,7 @@ export default function FamilyTreeView({
                 hideMales={hideMales}
                 hideFemales={hideFemales}
                 highlightChain={highlightChain}
+                chaseProgress={chaseProgress}
               />
             </Animated.View>
           </Animated.View>
@@ -999,7 +1012,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "nowrap",
     alignItems: "stretch",
-    alignSelf: "center",
     backgroundColor: colors.white,
     borderRadius: 16,
     borderWidth: 1,
@@ -1052,10 +1064,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  /* —— nhiều vợ/chồng: chồng giữa, vợ 2 bên, mỗi hôn nhân 1 nhánh nối riêng —— */
+  /* —— nhiều vợ/chồng: chồng giữa, vợ 2 bên, mỗi hôn nhân 1 nhánh nối riêng ——
+   * Overlay đặt position:absolute, neo left/right:0 vào nodeCol (luôn là
+   * positioning context mặc định trong RN) — tránh phải đoán bề rộng của
+   * container auto-size, nên toạ độ luôn khớp chính xác với coupleBox/branchesRow. */
   multiConnectorOverlay: {
-    alignSelf: "center",
-    position: "relative",
+    position: "absolute",
+    left: 0,
+    right: 0,
   },
   multiStub: {
     position: "absolute",
@@ -1068,12 +1084,12 @@ const styles = StyleSheet.create({
     backgroundColor: LINE,
   },
   multiBranchesRow: {
-    alignSelf: "center",
     flexDirection: "row",
     alignItems: "flex-start",
+    marginTop: STEM_H,
   },
   multiBranchCol: {
-    marginHorizontal: NODE_MARGIN / 2,
+    marginHorizontal: 6,
     alignItems: "center",
   },
 

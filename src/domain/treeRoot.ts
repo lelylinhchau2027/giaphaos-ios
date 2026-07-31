@@ -119,28 +119,48 @@ export function getChildrenGroupedBySpouses(
   return branches;
 }
 
+export type EldestSonChainEntry = {
+  depth: number;
+  /** Vợ/chồng đã sinh ra con trai trưởng kế tiếp trong chuỗi — sáng viền cùng lúc. */
+  spouseId: string | null;
+};
+
 /**
  * Chuỗi "trưởng nam": bắt đầu từ `rootId`, đi xuống qua con trai đầu lòng
  * (theo birth_order/birth_year, giữa TẤT CẢ vợ/chồng) của từng đời, cho tới
- * khi không còn con trai. Trả về Map id -> độ sâu (0 = gốc) để component vẽ
- * hiệu ứng có thể tạo độ trễ tăng dần theo từng đời.
+ * khi không còn con trai. Trả về Map id -> {depth, spouseId} để component vẽ
+ * hiệu ứng "chạy" theo độ sâu và sáng viền cả cặp vợ chồng trưởng.
  */
 export function computeEldestSonChain(
   rootId: string,
   relationships: Relationship[],
   personsMap: Map<string, Person>,
-): Map<string, number> {
-  const chain = new Map<string, number>();
+): Map<string, EldestSonChainEntry> {
+  const chain = new Map<string, EldestSonChainEntry>();
   const visited = new Set<string>();
+  const isChildRel = (r: Relationship) =>
+    r.type === "biological_child" || r.type === "adopted_child";
   let current = personsMap.get(rootId) ?? null;
   let depth = 0;
 
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
-    chain.set(current.id, depth);
     const eldestSon = getChildren(current.id, relationships, personsMap).find(
       (c) => c.gender === "male",
     );
+
+    let spouseId: string | null = null;
+    if (eldestSon) {
+      const spouses = getSpouses(current.id, relationships, personsMap);
+      const match = spouses.find((s) =>
+        relationships.some(
+          (r) => isChildRel(r) && r.person_a === s.id && r.person_b === eldestSon.id,
+        ),
+      );
+      spouseId = (match ?? spouses[0])?.id ?? null;
+    }
+
+    chain.set(current.id, { depth, spouseId });
     if (!eldestSon) break;
     current = eldestSon;
     depth += 1;
