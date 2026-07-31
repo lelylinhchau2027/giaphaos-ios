@@ -49,7 +49,31 @@ const GOLD_GLOW = colors.amberDark;
 /** Thời gian "đốm sáng" đi từ 1 đời sang đời kế tiếp. */
 const CHASE_STEP_MS = 550;
 
-/** Một đoạn line — vẽ tĩnh (màu xám) hoặc vàng nhấp nháy khi nằm trên chuỗi trưởng nam. */
+/**
+ * Đoạn line vàng nhấp nháy — TÁCH RIÊNG khỏi TreeLine để chỉ những line thực
+ * sự đang sáng mới mount Reanimated (useAnimatedStyle). Gọi hook này cho MỌI
+ * line trong cây (kể cả khi tắt tính năng trưởng nam) từng gây treo/crash khi
+ * cây có nhiều thành viên.
+ */
+function AnimatedGoldLine({
+  style,
+  depth,
+  chaseProgress,
+}: {
+  style: object;
+  depth: number;
+  chaseProgress: SharedValue<number> | null;
+}) {
+  const animStyle = useAnimatedStyle(() => {
+    if (!chaseProgress) return { backgroundColor: GOLD, opacity: 1 };
+    const dist = Math.abs(chaseProgress.value - depth);
+    const glow = Math.max(0, 1 - dist);
+    return { backgroundColor: GOLD, opacity: 0.35 + glow * 0.65 };
+  });
+  return <Animated.View style={[style, animStyle]} />;
+}
+
+/** Một đoạn line — vẽ tĩnh (màu xám, không tốn overhead animation) hoặc vàng nhấp nháy. */
 function TreeLine({
   style,
   highlighted,
@@ -61,14 +85,25 @@ function TreeLine({
   depth: number;
   chaseProgress: SharedValue<number> | null;
 }) {
-  const animStyle = useAnimatedStyle(() => {
-    if (!chaseProgress) return { backgroundColor: GOLD, opacity: 1 };
+  if (!highlighted) return <View style={style} />;
+  return <AnimatedGoldLine style={style} depth={depth} chaseProgress={chaseProgress} />;
+}
+
+/** Viền vàng nhấp nháy quanh thẻ — chỉ mount (và chỉ tốn Reanimated) khi thẻ đang sáng. */
+function GoldGlowRing({
+  depth,
+  chaseProgress,
+}: {
+  depth: number;
+  chaseProgress: SharedValue<number> | null;
+}) {
+  const glowStyle = useAnimatedStyle(() => {
+    if (!chaseProgress) return { opacity: 1 };
     const dist = Math.abs(chaseProgress.value - depth);
     const glow = Math.max(0, 1 - dist);
-    return { backgroundColor: GOLD, opacity: 0.35 + glow * 0.65 };
+    return { opacity: 0.35 + glow * 0.65 };
   });
-  if (!highlighted) return <View style={style} />;
-  return <Animated.View style={[style, animStyle]} />;
+  return <Animated.View pointerEvents="none" style={[styles.goldGlowRing, glowStyle]} />;
 }
 
 /** Compact vertical card — mirrors web FamilyNodeCard */
@@ -101,14 +136,6 @@ function TreePersonCard({
       ? new Date().getFullYear() - person.birth_year
       : null;
   const highlighted = chaseDepth != null;
-  const depth = chaseDepth ?? 0;
-  const progress = chaseProgress ?? null;
-  const glowStyle = useAnimatedStyle(() => {
-    if (!progress) return { opacity: 1 };
-    const dist = Math.abs(progress.value - depth);
-    const glow = Math.max(0, 1 - dist);
-    return { opacity: 0.35 + glow * 0.65 };
-  });
 
   return (
     <Pressable
@@ -120,7 +147,7 @@ function TreePersonCard({
       ]}
     >
       {highlighted ? (
-        <Animated.View pointerEvents="none" style={[styles.goldGlowRing, glowStyle]} />
+        <GoldGlowRing depth={chaseDepth ?? 0} chaseProgress={chaseProgress ?? null} />
       ) : null}
 
       {showRing ? (
