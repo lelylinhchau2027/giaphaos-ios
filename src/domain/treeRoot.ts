@@ -118,3 +118,33 @@ export function getChildrenGroupedBySpouses(
   }
   return branches;
 }
+
+/**
+ * Chuỗi "trưởng nam": bắt đầu từ `rootId`, đi xuống qua con trai đầu lòng
+ * (theo birth_order/birth_year, giữa TẤT CẢ vợ/chồng) của từng đời, cho tới
+ * khi không còn con trai. Trả về Map id -> độ sâu (0 = gốc) để component vẽ
+ * hiệu ứng có thể tạo độ trễ tăng dần theo từng đời.
+ */
+export function computeEldestSonChain(
+  rootId: string,
+  relationships: Relationship[],
+  personsMap: Map<string, Person>,
+): Map<string, number> {
+  const chain = new Map<string, number>();
+  const visited = new Set<string>();
+  let current = personsMap.get(rootId) ?? null;
+  let depth = 0;
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    chain.set(current.id, depth);
+    const eldestSon = getChildren(current.id, relationships, personsMap).find(
+      (c) => c.gender === "male",
+    );
+    if (!eldestSon) break;
+    current = eldestSon;
+    depth += 1;
+  }
+
+  return chain;
+}

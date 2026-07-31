@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -14,13 +14,18 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
   withTiming,
 } from "react-native-reanimated";
 import {
+  computeEldestSonChain,
   getChildren,
   getChildrenGroupedBySpouses,
   getSpouses,
   pickDefaultRootId,
+  type ChildrenBranch,
 } from "../domain/treeRoot";
 import type { Person, Relationship } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
@@ -36,6 +41,57 @@ const LINE = colors.stone200;
 const LINE_W = 2;
 const STEM_H = 22;
 const CARD_W = 88;
+/** Mỗi node (nodeCol) có marginHorizontal:6 hai bên → 12px giữa 2 anh em cạnh nhau. */
+const NODE_MARGIN = 12;
+
+const GOLD = colors.amberMid;
+const GOLD_GLOW = colors.amberDark;
+/** Độ trễ giữa mỗi đời khi "chạy" hiệu ứng trưởng nam — tạo cảm giác lan dần xuống. */
+const CHASE_PHASE_MS = 260;
+const CHASE_CYCLE_MS = 1500;
+
+/** Nhấp nháy tuần hoàn, lệch pha theo `depth` — dùng chung cho cả đường nối và viền thẻ. */
+function useChasePulse(active: boolean, depth: number) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    if (!active) {
+      progress.value = 0;
+      return;
+    }
+    progress.value = withDelay(
+      Math.max(0, depth) * CHASE_PHASE_MS,
+      withRepeat(
+        withSequence(
+          withTiming(1, { duration: 320 }),
+          withTiming(0.25, { duration: CHASE_CYCLE_MS - 320 }),
+        ),
+        -1,
+        false,
+      ),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, depth]);
+  return progress;
+}
+
+/** Một đoạn line — vẽ tĩnh (màu xám) hoặc vàng nhấp nháy khi nằm trên chuỗi trưởng nam. */
+function TreeLine({
+  style,
+  highlighted,
+  depth,
+}: {
+  style: object;
+  highlighted: boolean;
+  depth: number;
+}) {
+  const pulse = useChasePulse(highlighted, depth);
+  const animStyle = useAnimatedStyle(() => ({
+    backgroundColor: GOLD,
+    opacity: 0.45 + pulse.value * 0.55,
+  }));
+  if (!highlighted) return <View style={style} />;
+  return <Animated.View style={[style, animStyle]} />;
+}
 
 /** Compact vertical card — mirrors web FamilyNodeCard */
 function TreePersonCard({
@@ -44,18 +100,26 @@ function TreePersonCard({
   showRing,
   showPlus,
   onPress,
+  chaseDepth,
 }: {
   person: Person;
   role?: string;
   showRing?: boolean;
   showPlus?: boolean;
   onPress: () => void;
+  /** Có mặt (>=0) khi thẻ này nằm trên chuỗi trưởng nam đang bật hiệu ứng. */
+  chaseDepth?: number;
 }) {
   const initial = person.full_name?.charAt(0)?.toUpperCase() || "?";
   const age =
     !person.is_deceased && person.birth_year
       ? new Date().getFullYear() - person.birth_year
       : null;
+  const highlighted = chaseDepth != null;
+  const pulse = useChasePulse(highlighted, chaseDepth ?? 0);
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: 0.4 + pulse.value * 0.6,
+  }));
 
   return (
     <Pressable
@@ -65,6 +129,10 @@ function TreePersonCard({
         person.is_deceased && styles.cardDeceased,
       ]}
     >
+      {highlighted ? (
+        <Animated.View pointerEvents="none" style={[styles.goldGlowRing, glowStyle]} />
+      ) : null}
+
       {showRing ? (
         <View style={styles.badgeIcon}>
           <Text style={styles.badgeIconText}>💍</Text>
@@ -115,12 +183,135 @@ function TreePersonCard({
             {person.gender === "male" ? "Rể" : person.gender === "female" ? "Dâu" : "Khách"}
           </Text>
         ) : null}
+        {highlighted ? <Text style={styles.metaPillGold}>👑 Trưởng nam</Text> : null}
       </View>
 
       {role ? <Text style={styles.roleText}>{role}</Text> : null}
     </Pressable>
   );
 }
+
+const passesGenderFilter = (
+  g: Person["gender"],
+  hideMales: boolean,
+  hideFemales: boolean,
+) => !(hideMales && g === "male") && !(hideFemales && g === "female");
+
+type LayoutPlan =
+  | { mode: "single"; spouses: Person[]; children: Person[] }
+  | {
+      mode: "multi";
+      rawSpouses: Person[];
+      rowLeft: Person[];
+      rowRight: Person[];
+      branches: ChildrenBranch[];
+    };
+
+/**
+ * Quyết định layout (1 khối gộp hay tách nhánh nhiều vợ/chồng) — dùng chung
+ * bởi cả phần tính bề rộng (computeNodeWidth) lẫn phần render, để 2 bên luôn
+ * khớp nhau tuyệt đối (không bị lệch nhánh nối do tính sai kích thước).
+ */
+function planLayout(
+  person: Person,
+  personsMap: Map<string, Person>,
+  relationships: Relationship[],
+  hideSpouses: boolean,
+  hideMales: boolean,
+  hideFemales: boolean,
+): LayoutPlan {
+  const rawSpouses = hideSpouses
+    ? []
+    : getSpouses(person.id, relationships, personsMap);
+
+  if (rawSpouses.length <= 1) {
+    const spouses = rawSpouses.filter((s) =>
+      passesGenderFilter(s.gender, hideMales, hideFemales),
+    );
+    const children = getChildren(person.id, relationships, personsMap).filter((c) =>
+      passesGenderFilter(c.gender, hideMales, hideFemales),
+    );
+    return { mode: "single", spouses, children };
+  }
+
+  // Xen kẽ 2 bên: vợ/chồng thứ 1 → phải (gần), thứ 2 → trái (gần), thứ 3 → phải (xa)...
+  const rightSpouses: Person[] = [];
+  const leftSpousesEncountered: Person[] = [];
+  rawSpouses.forEach((s, i) => {
+    if (i % 2 === 0) rightSpouses.push(s);
+    else leftSpousesEncountered.push(s);
+  });
+  const rowLeft = [...leftSpousesEncountered].reverse();
+
+  const branches = getChildrenGroupedBySpouses(
+    person.id,
+    rawSpouses,
+    relationships,
+    personsMap,
+  ).map((b) => ({
+    spouse: b.spouse,
+    children: b.children.filter((c) => passesGenderFilter(c.gender, hideMales, hideFemales)),
+  }));
+
+  return { mode: "multi", rawSpouses, rowLeft, rowRight: rightSpouses, branches };
+}
+
+/**
+ * Bề rộng (px) mà node này sẽ thực sự chiếm khi render — tính đệ quy bằng
+ * đúng các hằng số layout (CARD_W, NODE_MARGIN) mà JSX bên dưới dùng, để suy
+ * ra chính xác điểm giữa avatar cho nhánh nối nhiều vợ/chồng mà không cần đo
+ * layout thật (tránh giật/lệch khung hình).
+ */
+function computeNodeWidth(
+  person: Person,
+  personsMap: Map<string, Person>,
+  relationships: Relationship[],
+  hideSpouses: boolean,
+  hideMales: boolean,
+  hideFemales: boolean,
+  visited: Set<string>,
+): number {
+  if (visited.has(person.id)) return CARD_W;
+  const nextVisited = new Set(visited);
+  nextVisited.add(person.id);
+
+  const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
+
+  const widthOfKids = (kids: Person[]) =>
+    kids.reduce(
+      (sum, c) =>
+        sum +
+        computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
+        NODE_MARGIN,
+      0,
+    );
+
+  if (plan.mode === "single") {
+    if (plan.children.length === 0) return CARD_W;
+    return Math.max(CARD_W, widthOfKids(plan.children));
+  }
+
+  const coupleRowWidth = (plan.rawSpouses.length + 1) * CARD_W;
+  let branchesRowWidth = 0;
+  for (const b of plan.branches) {
+    if (b.children.length === 0) continue;
+    branchesRowWidth += widthOfKids(b.children) + NODE_MARGIN;
+  }
+  return Math.max(coupleRowWidth, branchesRowWidth);
+}
+
+type TreeNodeProps = {
+  person: Person;
+  personsMap: Map<string, Person>;
+  relationships: Relationship[];
+  visited: Set<string>;
+  onPressPerson: (p: Person) => void;
+  hideSpouses: boolean;
+  hideMales: boolean;
+  hideFemales: boolean;
+  /** id -> độ sâu trong chuỗi trưởng nam (null khi tính năng tắt). */
+  highlightChain: Map<string, number> | null;
+};
 
 function TreeNode({
   person,
@@ -131,88 +322,95 @@ function TreeNode({
   hideSpouses,
   hideMales,
   hideFemales,
-}: {
-  person: Person;
-  personsMap: Map<string, Person>;
-  relationships: Relationship[];
-  visited: Set<string>;
-  onPressPerson: (p: Person) => void;
-  hideSpouses: boolean;
-  hideMales: boolean;
-  hideFemales: boolean;
-}) {
+  highlightChain,
+}: TreeNodeProps) {
   if (visited.has(person.id)) return null;
   const nextVisited = new Set(visited);
   nextVisited.add(person.id);
 
-  const rawSpouses = hideSpouses
-    ? []
-    : getSpouses(person.id, relationships, personsMap);
+  const myDepth = highlightChain?.get(person.id);
+  const isHighlighted = myDepth != null;
 
-  const passesGenderFilter = (g: Person["gender"]) =>
-    !(hideMales && g === "male") && !(hideFemales && g === "female");
+  const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
 
-  const filterChildren = (list: Person[]) =>
-    list.filter((c) => passesGenderFilter(c.gender));
+  const commonChildProps = {
+    personsMap,
+    relationships,
+    onPressPerson,
+    hideSpouses,
+    hideMales,
+    hideFemales,
+    highlightChain,
+  };
 
-  /** Shared renderer for a row of child columns + connector lines down to `parentPerson`. */
+  /** Hàng con + line nối, không kèm stem phía trên (dùng khi cha đã tự vẽ stem riêng). */
+  function renderKidsRow(kids: Person[]) {
+    return (
+      <View style={styles.kidsRow}>
+        {kids.map((child, index) => {
+          const isOnly = kids.length === 1;
+          const isFirst = index === 0;
+          const isLast = index === kids.length - 1;
+          const childDepth = highlightChain?.get(child.id);
+          const childHighlighted = childDepth != null;
+          return (
+            <View key={child.id} style={styles.kidCol}>
+              {isOnly ? (
+                <View style={styles.onlyStemWrap}>
+                  <TreeLine
+                    style={styles.vStub}
+                    highlighted={childHighlighted}
+                    depth={childDepth ?? 0}
+                  />
+                </View>
+              ) : (
+                <View style={styles.connector}>
+                  <TreeLine
+                    style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
+                    highlighted={childHighlighted && !isFirst}
+                    depth={childDepth ?? 0}
+                  />
+                  <TreeLine
+                    style={styles.vStub}
+                    highlighted={childHighlighted}
+                    depth={childDepth ?? 0}
+                  />
+                  <TreeLine
+                    style={[styles.hArm, isLast ? styles.hArmHidden : null]}
+                    highlighted={childHighlighted && !isLast}
+                    depth={childDepth ?? 0}
+                  />
+                </View>
+              )}
+              <TreeNode person={child} visited={nextVisited} {...commonChildProps} />
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
   function renderKids(kids: Person[]) {
     if (kids.length === 0) return null;
     return (
       <View style={styles.kidsBlock}>
-        <View style={styles.parentStem} />
-        <View style={styles.kidsRow}>
-          {kids.map((child, index) => {
-            const isOnly = kids.length === 1;
-            const isFirst = index === 0;
-            const isLast = index === kids.length - 1;
-            return (
-              <View key={child.id} style={styles.kidCol}>
-                {isOnly ? (
-                  <View style={styles.onlyStemWrap}>
-                    <View style={styles.vStub} />
-                  </View>
-                ) : (
-                  <View style={styles.connector}>
-                    <View
-                      style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
-                    />
-                    <View style={styles.vStub} />
-                    <View
-                      style={[styles.hArm, isLast ? styles.hArmHidden : null]}
-                    />
-                  </View>
-                )}
-                <TreeNode
-                  person={child}
-                  personsMap={personsMap}
-                  relationships={relationships}
-                  visited={nextVisited}
-                  onPressPerson={onPressPerson}
-                  hideSpouses={hideSpouses}
-                  hideMales={hideMales}
-                  hideFemales={hideFemales}
-                />
-              </View>
-            );
-          })}
-        </View>
+        <TreeLine style={styles.parentStem} highlighted={isHighlighted} depth={myDepth ?? 0} />
+        {renderKidsRow(kids)}
       </View>
     );
   }
 
   // 1 vợ/chồng trở xuống: giữ nguyên cách hiển thị gộp chung một khối.
-  if (rawSpouses.length <= 1) {
-    const spouses = rawSpouses.filter((s) => passesGenderFilter(s.gender));
-    const children = filterChildren(
-      getChildren(person.id, relationships, personsMap),
-    );
-
+  if (plan.mode === "single") {
     return (
       <View style={styles.nodeCol}>
         <View style={styles.coupleBox}>
-          <TreePersonCard person={person} onPress={() => onPressPerson(person)} />
-          {spouses.map((s, idx) => (
+          <TreePersonCard
+            person={person}
+            onPress={() => onPressPerson(person)}
+            chaseDepth={myDepth}
+          />
+          {plan.spouses.map((s, idx) => (
             <TreePersonCard
               key={s.id}
               person={s}
@@ -224,94 +422,161 @@ function TreeNode({
           ))}
         </View>
 
-        {renderKids(children)}
+        {renderKids(plan.children)}
       </View>
     );
   }
 
-  // >1 vợ/chồng: tách nhánh — mỗi vợ/chồng và con cái của riêng người đó đi
-  // theo một nhánh riêng, để phân biệt rõ con của vợ/chồng nào.
-  const branches = getChildrenGroupedBySpouses(
-    person.id,
-    rawSpouses,
-    relationships,
-    personsMap,
-  )
-    .map((b) => ({
-      spouse: b.spouse,
-      spouseHidden: b.spouse ? !passesGenderFilter(b.spouse.gender) : false,
-      children: filterChildren(b.children),
-    }))
-    // Ẩn nhánh chỉ khi cả vợ/chồng lẫn con của nhánh đó đều không còn gì để hiển thị.
-    .filter((b) => !b.spouseHidden || b.children.length > 0);
+  // >1 vợ/chồng: chồng/vợ giữa, các vợ/chồng còn lại xếp 2 bên; mỗi cuộc hôn
+  // nhân có 1 nhánh nối riêng bắt đầu từ đúng điểm giữa 2 avatar của cặp đó.
+  const { rawSpouses, rowLeft, rowRight, branches } = plan;
+  const rowItems: Person[] = [...rowLeft, person, ...rowRight];
+  const personIndexInRow = rowLeft.length;
+  const coupleRowWidth = rowItems.length * CARD_W;
+
+  const rowIndexById = new Map<string, number>();
+  rowItems.forEach((p, i) => rowIndexById.set(p.id, i));
 
   const maleCount = rawSpouses.filter((s) => s.gender === "male").length;
   const femaleCount = rawSpouses.filter((s) => s.gender === "female").length;
-  let maleSeen = 0;
-  let femaleSeen = 0;
+  const roleById = new Map<string, string>();
+  {
+    let maleSeen = 0;
+    let femaleSeen = 0;
+    for (const s of rawSpouses) {
+      if (s.gender === "male") {
+        maleSeen += 1;
+        roleById.set(s.id, maleCount > 1 ? `Chồng ${maleSeen}` : "Chồng");
+      } else if (s.gender === "female") {
+        femaleSeen += 1;
+        roleById.set(s.id, femaleCount > 1 ? `Vợ ${femaleSeen}` : "Vợ");
+      }
+    }
+  }
+
+  type RenderBranch = {
+    key: string;
+    children: Person[];
+    topAnchorLocal: number;
+  };
+
+  const orderedSpouses = [...rowLeft, ...rowRight];
+  const renderBranches: RenderBranch[] = [];
+  for (const spouse of orderedSpouses) {
+    const branch = branches.find((b) => b.spouse?.id === spouse.id);
+    if (!branch || branch.children.length === 0) continue;
+    const rowIdx = rowIndexById.get(spouse.id)!;
+    const topAnchorLocal = ((personIndexInRow + rowIdx + 1) / 2) * CARD_W;
+    renderBranches.push({ key: spouse.id, children: branch.children, topAnchorLocal });
+  }
+  const unassignedBranch = branches.find((b) => b.spouse === null);
+  if (unassignedBranch && unassignedBranch.children.length > 0) {
+    renderBranches.push({
+      key: "unassigned",
+      children: unassignedBranch.children,
+      topAnchorLocal: personIndexInRow * CARD_W + CARD_W / 2,
+    });
+  }
+
+  const branchWidths = renderBranches.map((b) =>
+    b.children.reduce(
+      (sum, c) =>
+        sum +
+        computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
+        NODE_MARGIN,
+      0,
+    ),
+  );
+  const branchesRowWidth = branchWidths.reduce((a, w) => a + w + NODE_MARGIN, 0);
+  const outerWidth = Math.max(coupleRowWidth, branchesRowWidth);
+  const coupleRowOffset = (outerWidth - coupleRowWidth) / 2;
+  const branchesRowOffset = (outerWidth - branchesRowWidth) / 2;
+
+  let cursor = branchesRowOffset;
+  const bottomAnchors: number[] = [];
+  branchWidths.forEach((w) => {
+    cursor += NODE_MARGIN / 2;
+    bottomAnchors.push(cursor + w / 2);
+    cursor += w + NODE_MARGIN / 2;
+  });
+
+  const BEND_Y = STEM_H / 2;
 
   return (
-    <View style={styles.nodeCol}>
-      <View style={styles.coupleBox}>
-        <TreePersonCard person={person} onPress={() => onPressPerson(person)} />
+    <View style={[styles.nodeCol, { width: outerWidth }]}>
+      <View style={[styles.coupleBox, { width: coupleRowWidth }]}>
+        {rowItems.map((p) =>
+          p.id === person.id ? (
+            <TreePersonCard
+              key={p.id}
+              person={p}
+              onPress={() => onPressPerson(p)}
+              chaseDepth={myDepth}
+            />
+          ) : (
+            <TreePersonCard
+              key={p.id}
+              person={p}
+              role={roleById.get(p.id)}
+              onPress={() => onPressPerson(p)}
+            />
+          ),
+        )}
       </View>
 
-      <View style={styles.kidsBlock}>
-        <View style={styles.parentStem} />
-        <View style={styles.kidsRow}>
-          {branches.map((branch, bIdx) => {
-            const { spouse, spouseHidden, children: branchChildren } = branch;
-            let role: string | undefined;
-            if (spouse) {
-              if (spouse.gender === "male") {
-                maleSeen += 1;
-                role = maleCount > 1 ? `Chồng ${maleSeen}` : "Chồng";
-              } else if (spouse.gender === "female") {
-                femaleSeen += 1;
-                role = femaleCount > 1 ? `Vợ ${femaleSeen}` : "Vợ";
-              }
-            }
+      {renderBranches.length > 0 ? (
+        <>
+          <View style={[styles.multiConnectorOverlay, { width: outerWidth, height: STEM_H }]}>
+            {renderBranches.map((b, idx) => {
+              const topX = coupleRowOffset + b.topAnchorLocal;
+              const botX = bottomAnchors[idx];
+              const left = Math.min(topX, botX);
+              const barWidth = Math.abs(botX - topX) + LINE_W;
+              const branchHighlighted = b.children.some(
+                (c) => highlightChain?.has(c.id),
+              );
+              const branchDepth =
+                (highlightChain && b.children
+                  .map((c) => highlightChain.get(c.id))
+                  .find((d) => d != null)) ?? 0;
 
-            const isOnly = branches.length === 1;
-            const isFirst = bIdx === 0;
-            const isLast = bIdx === branches.length - 1;
-
-            return (
-              <View key={spouse?.id ?? `unassigned-${bIdx}`} style={styles.kidCol}>
-                {isOnly ? (
-                  <View style={styles.onlyStemWrap}>
-                    <View style={styles.vStub} />
-                  </View>
-                ) : (
-                  <View style={styles.connector}>
-                    <View style={[styles.hArm, isFirst ? styles.hArmHidden : null]} />
-                    <View style={styles.vStub} />
-                    <View style={[styles.hArm, isLast ? styles.hArmHidden : null]} />
-                  </View>
-                )}
-
-                <View style={styles.nodeCol}>
-                  {spouse && !spouseHidden ? (
-                    <View style={styles.coupleBox}>
-                      <TreePersonCard
-                        person={spouse}
-                        role={role}
-                        showRing={bIdx === 0}
-                        showPlus={bIdx > 0}
-                        onPress={() => onPressPerson(spouse)}
-                      />
-                    </View>
-                  ) : !spouse ? (
-                    <Text style={styles.unknownSpouseLabel}>Chưa rõ vợ/chồng</Text>
-                  ) : null}
-
-                  {renderKids(branchChildren)}
+              return (
+                <View key={b.key} style={StyleSheet.absoluteFill} pointerEvents="none">
+                  <TreeLine
+                    style={[styles.multiStub, { left: topX - LINE_W / 2, top: 0, height: BEND_Y }]}
+                    highlighted={branchHighlighted}
+                    depth={branchDepth}
+                  />
+                  <TreeLine
+                    style={[
+                      styles.multiBar,
+                      { left, top: BEND_Y - LINE_W / 2, width: barWidth },
+                    ]}
+                    highlighted={branchHighlighted}
+                    depth={branchDepth}
+                  />
+                  <TreeLine
+                    style={[
+                      styles.multiStub,
+                      { left: botX - LINE_W / 2, top: BEND_Y, height: STEM_H - BEND_Y },
+                    ]}
+                    highlighted={branchHighlighted}
+                    depth={branchDepth}
+                  />
                 </View>
+              );
+            })}
+          </View>
+
+          <View style={[styles.multiBranchesRow, { width: branchesRowWidth }]}>
+            {renderBranches.map((b) => (
+              <View key={b.key} style={styles.multiBranchCol}>
+                {renderKidsRow(b.children)}
               </View>
-            );
-          })}
-        </View>
-      </View>
+            ))}
+          </View>
+        </>
+      ) : null}
     </View>
   );
 }
@@ -326,6 +591,7 @@ export default function FamilyTreeView({
   const [hideMales, setHideMales] = useState(false);
   const [hideFemales, setHideFemales] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [showEldestSon, setShowEldestSon] = useState(false);
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -347,6 +613,11 @@ export default function FamilyTreeView({
       : pickDefaultRootId(persons, relationships, rootId);
 
   const rootPerson = effectiveRoot ? personsMap.get(effectiveRoot) : null;
+
+  const highlightChain = useMemo(() => {
+    if (!showEldestSon || !rootPerson) return null;
+    return computeEldestSonChain(rootPerson.id, relationships, personsMap);
+  }, [showEldestSon, rootPerson, relationships, personsMap]);
 
   const roots = useMemo(
     () => [...persons].sort((a, b) => a.full_name.localeCompare(b.full_name, "vi")),
@@ -424,6 +695,16 @@ export default function FamilyTreeView({
           <Text style={styles.rootLabel}>Gốc:</Text>
           <Text style={styles.rootName} numberOfLines={1}>
             {rootPerson.full_name}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.filterBtn, showEldestSon && styles.filterBtnGold]}
+          onPress={() => setShowEldestSon((v) => !v)}
+        >
+          <Text
+            style={[styles.filterBtnText, showEldestSon && styles.filterBtnGoldText]}
+          >
+            👑 Trưởng nam
           </Text>
         </Pressable>
         <Pressable
@@ -531,6 +812,7 @@ export default function FamilyTreeView({
                 hideSpouses={hideSpouses}
                 hideMales={hideMales}
                 hideFemales={hideFemales}
+                highlightChain={highlightChain}
               />
             </Animated.View>
           </Animated.View>
@@ -621,8 +903,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.amberSoft,
     borderColor: colors.amber,
   },
+  filterBtnGold: {
+    backgroundColor: colors.amberMid,
+    borderColor: colors.amberDark,
+  },
   filterBtnText: { fontSize: 12, fontWeight: "700", color: colors.text },
   filterBtnTextOn: { color: colors.amberDark },
+  filterBtnGoldText: { color: colors.white },
   filters: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -712,6 +999,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "nowrap",
     alignItems: "stretch",
+    alignSelf: "center",
     backgroundColor: colors.white,
     borderRadius: 16,
     borderWidth: 1,
@@ -725,14 +1013,6 @@ const styles = StyleSheet.create({
   },
   kidsBlock: {
     alignItems: "center",
-  },
-  unknownSpouseLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: colors.textSoft,
-    fontStyle: "italic",
-    paddingVertical: 10,
-    paddingHorizontal: 6,
   },
   parentStem: {
     width: LINE_W,
@@ -772,6 +1052,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
+  /* —— nhiều vợ/chồng: chồng giữa, vợ 2 bên, mỗi hôn nhân 1 nhánh nối riêng —— */
+  multiConnectorOverlay: {
+    alignSelf: "center",
+    position: "relative",
+  },
+  multiStub: {
+    position: "absolute",
+    width: LINE_W,
+    backgroundColor: LINE,
+  },
+  multiBar: {
+    position: "absolute",
+    height: LINE_W,
+    backgroundColor: LINE,
+  },
+  multiBranchesRow: {
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "flex-start",
+  },
+  multiBranchCol: {
+    marginHorizontal: NODE_MARGIN / 2,
+    alignItems: "center",
+  },
+
   /* —— person card —— */
   card: {
     width: CARD_W,
@@ -783,6 +1088,21 @@ const styles = StyleSheet.create({
   },
   cardDeceased: {
     opacity: 0.75,
+  },
+  goldGlowRing: {
+    position: "absolute",
+    top: -4,
+    left: -4,
+    right: -4,
+    bottom: -4,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: GOLD,
+    shadowColor: GOLD_GLOW,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   badgeIcon: {
     position: "absolute",
@@ -873,6 +1193,16 @@ const styles = StyleSheet.create({
   metaPillInLawF: {
     color: colors.rose,
     backgroundColor: colors.roseSoft,
+  },
+  metaPillGold: {
+    fontSize: 8,
+    fontWeight: "800",
+    color: colors.white,
+    backgroundColor: GOLD,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 8,
+    overflow: "hidden",
   },
   roleText: {
     marginTop: 2,
