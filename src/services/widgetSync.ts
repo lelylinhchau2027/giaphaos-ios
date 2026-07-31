@@ -7,7 +7,11 @@ import type {
 } from "../types";
 import { computeUpcomingEvents } from "./events";
 import { scheduleEventNotifications } from "./notifications";
-import { loadRuntimeConfig, type RuntimeConfig } from "./settings";
+import {
+  loadNotificationTime,
+  loadRuntimeConfig,
+  type RuntimeConfig,
+} from "./settings";
 import { fetchFamilyData, hasConfig } from "./supabaseData";
 import { getSupabase } from "./supabaseClient";
 
@@ -136,9 +140,12 @@ export async function syncWidgetAndNotifications(opts?: {
     await pushWidgetCache(cfg, payload);
     reloadWidget();
 
-    await scheduleEventNotifications(notifEvents, NOTIF_EVENT_DAYS).catch(
-      () => undefined,
-    );
+    const notifTime = await loadNotificationTime();
+    await scheduleEventNotifications(
+      notifEvents,
+      NOTIF_EVENT_DAYS,
+      notifTime,
+    ).catch(() => undefined);
 
     return {
       ok: true,

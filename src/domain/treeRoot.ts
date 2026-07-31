@@ -78,3 +78,43 @@ export function getSpouses(
     })
     .filter(Boolean) as Person[];
 }
+
+export type ChildrenBranch = {
+  /** null = không xác định được là con của người vợ/chồng nào (chưa gắn quan hệ với cha/mẹ còn lại) */
+  spouse: Person | null;
+  children: Person[];
+};
+
+/**
+ * Gom con cái của `personId` theo từng người vợ/chồng, để cây gia phả có thể
+ * tách nhánh khi một người có từ 2 vợ/chồng trở lên. Một đứa trẻ được xếp vào
+ * nhánh của vợ/chồng X nếu tồn tại quan hệ cha/mẹ-con giữa X và đứa trẻ đó.
+ * Con chưa rõ thuộc vợ/chồng nào (chỉ có 1 quan hệ cha/mẹ-con ghi nhận) được
+ * gom vào nhánh `spouse: null`.
+ */
+export function getChildrenGroupedBySpouses(
+  personId: string,
+  spouses: Person[],
+  relationships: Relationship[],
+  personsMap: Map<string, Person>,
+): ChildrenBranch[] {
+  const allChildren = getChildren(personId, relationships, personsMap);
+  const isChildRel = (r: Relationship) =>
+    r.type === "biological_child" || r.type === "adopted_child";
+
+  const branches: ChildrenBranch[] = spouses.map((spouse) => ({
+    spouse,
+    children: allChildren.filter((child) =>
+      relationships.some(
+        (r) => isChildRel(r) && r.person_a === spouse.id && r.person_b === child.id,
+      ),
+    ),
+  }));
+
+  const assignedIds = new Set(branches.flatMap((b) => b.children.map((c) => c.id)));
+  const unassigned = allChildren.filter((c) => !assignedIds.has(c.id));
+  if (unassigned.length > 0) {
+    branches.push({ spouse: null, children: unassigned });
+  }
+  return branches;
+}

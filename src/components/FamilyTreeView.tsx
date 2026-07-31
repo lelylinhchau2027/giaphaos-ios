@@ -16,7 +16,12 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { getChildren, getSpouses, pickDefaultRootId } from "../domain/treeRoot";
+import {
+  getChildren,
+  getChildrenGroupedBySpouses,
+  getSpouses,
+  pickDefaultRootId,
+} from "../domain/treeRoot";
 import type { Person, Relationship } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
 import GenderBadge from "./GenderBadge";
@@ -140,82 +145,173 @@ function TreeNode({
   const nextVisited = new Set(visited);
   nextVisited.add(person.id);
 
-  let spouses = hideSpouses
+  const rawSpouses = hideSpouses
     ? []
     : getSpouses(person.id, relationships, personsMap);
-  let children = getChildren(person.id, relationships, personsMap);
 
-  if (hideMales) {
-    spouses = spouses.filter((s) => s.gender !== "male");
-    children = children.filter((c) => c.gender !== "male");
+  const passesGenderFilter = (g: Person["gender"]) =>
+    !(hideMales && g === "male") && !(hideFemales && g === "female");
+
+  const filterChildren = (list: Person[]) =>
+    list.filter((c) => passesGenderFilter(c.gender));
+
+  /** Shared renderer for a row of child columns + connector lines down to `parentPerson`. */
+  function renderKids(kids: Person[]) {
+    if (kids.length === 0) return null;
+    return (
+      <View style={styles.kidsBlock}>
+        <View style={styles.parentStem} />
+        <View style={styles.kidsRow}>
+          {kids.map((child, index) => {
+            const isOnly = kids.length === 1;
+            const isFirst = index === 0;
+            const isLast = index === kids.length - 1;
+            return (
+              <View key={child.id} style={styles.kidCol}>
+                {isOnly ? (
+                  <View style={styles.onlyStemWrap}>
+                    <View style={styles.vStub} />
+                  </View>
+                ) : (
+                  <View style={styles.connector}>
+                    <View
+                      style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
+                    />
+                    <View style={styles.vStub} />
+                    <View
+                      style={[styles.hArm, isLast ? styles.hArmHidden : null]}
+                    />
+                  </View>
+                )}
+                <TreeNode
+                  person={child}
+                  personsMap={personsMap}
+                  relationships={relationships}
+                  visited={nextVisited}
+                  onPressPerson={onPressPerson}
+                  hideSpouses={hideSpouses}
+                  hideMales={hideMales}
+                  hideFemales={hideFemales}
+                />
+              </View>
+            );
+          })}
+        </View>
+      </View>
+    );
   }
-  if (hideFemales) {
-    spouses = spouses.filter((s) => s.gender !== "female");
-    children = children.filter((c) => c.gender !== "female");
+
+  // 1 vợ/chồng trở xuống: giữ nguyên cách hiển thị gộp chung một khối.
+  if (rawSpouses.length <= 1) {
+    const spouses = rawSpouses.filter((s) => passesGenderFilter(s.gender));
+    const children = filterChildren(
+      getChildren(person.id, relationships, personsMap),
+    );
+
+    return (
+      <View style={styles.nodeCol}>
+        <View style={styles.coupleBox}>
+          <TreePersonCard person={person} onPress={() => onPressPerson(person)} />
+          {spouses.map((s, idx) => (
+            <TreePersonCard
+              key={s.id}
+              person={s}
+              role={s.gender === "male" ? "Chồng" : "Vợ"}
+              showRing={idx === 0}
+              showPlus={idx > 0}
+              onPress={() => onPressPerson(s)}
+            />
+          ))}
+        </View>
+
+        {renderKids(children)}
+      </View>
+    );
   }
+
+  // >1 vợ/chồng: tách nhánh — mỗi vợ/chồng và con cái của riêng người đó đi
+  // theo một nhánh riêng, để phân biệt rõ con của vợ/chồng nào.
+  const branches = getChildrenGroupedBySpouses(
+    person.id,
+    rawSpouses,
+    relationships,
+    personsMap,
+  )
+    .map((b) => ({
+      spouse: b.spouse,
+      spouseHidden: b.spouse ? !passesGenderFilter(b.spouse.gender) : false,
+      children: filterChildren(b.children),
+    }))
+    // Ẩn nhánh chỉ khi cả vợ/chồng lẫn con của nhánh đó đều không còn gì để hiển thị.
+    .filter((b) => !b.spouseHidden || b.children.length > 0);
+
+  const maleCount = rawSpouses.filter((s) => s.gender === "male").length;
+  const femaleCount = rawSpouses.filter((s) => s.gender === "female").length;
+  let maleSeen = 0;
+  let femaleSeen = 0;
 
   return (
     <View style={styles.nodeCol}>
-      {/* Couple unit: person + spouses side-by-side (web style) */}
       <View style={styles.coupleBox}>
         <TreePersonCard person={person} onPress={() => onPressPerson(person)} />
-        {spouses.map((s, idx) => (
-          <TreePersonCard
-            key={s.id}
-            person={s}
-            role={s.gender === "male" ? "Chồng" : "Vợ"}
-            showRing={idx === 0}
-            showPlus={idx > 0}
-            onPress={() => onPressPerson(s)}
-          />
-        ))}
       </View>
 
-      {children.length > 0 ? (
-        <View style={styles.kidsBlock}>
-          {/* Vertical stem from parent couple down to children bar */}
-          <View style={styles.parentStem} />
+      <View style={styles.kidsBlock}>
+        <View style={styles.parentStem} />
+        <View style={styles.kidsRow}>
+          {branches.map((branch, bIdx) => {
+            const { spouse, spouseHidden, children: branchChildren } = branch;
+            let role: string | undefined;
+            if (spouse) {
+              if (spouse.gender === "male") {
+                maleSeen += 1;
+                role = maleCount > 1 ? `Chồng ${maleSeen}` : "Chồng";
+              } else if (spouse.gender === "female") {
+                femaleSeen += 1;
+                role = femaleCount > 1 ? `Vợ ${femaleSeen}` : "Vợ";
+              }
+            }
 
-          <View style={styles.kidsRow}>
-            {children.map((child, index) => {
-              const isOnly = children.length === 1;
-              const isFirst = index === 0;
-              const isLast = index === children.length - 1;
-              return (
-                <View key={child.id} style={styles.kidCol}>
-                  {/* Connector: left H — vertical stub — right H (CSS-tree style) */}
-                  {isOnly ? (
-                    <View style={styles.onlyStemWrap}>
-                      <View style={styles.vStub} />
-                    </View>
-                  ) : (
-                    <View style={styles.connector}>
-                      <View
-                        style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
-                      />
-                      <View style={styles.vStub} />
-                      <View
-                        style={[styles.hArm, isLast ? styles.hArmHidden : null]}
-                      />
-                    </View>
-                  )}
+            const isOnly = branches.length === 1;
+            const isFirst = bIdx === 0;
+            const isLast = bIdx === branches.length - 1;
 
-                  <TreeNode
-                    person={child}
-                    personsMap={personsMap}
-                    relationships={relationships}
-                    visited={nextVisited}
-                    onPressPerson={onPressPerson}
-                    hideSpouses={hideSpouses}
-                    hideMales={hideMales}
-                    hideFemales={hideFemales}
-                  />
+            return (
+              <View key={spouse?.id ?? `unassigned-${bIdx}`} style={styles.kidCol}>
+                {isOnly ? (
+                  <View style={styles.onlyStemWrap}>
+                    <View style={styles.vStub} />
+                  </View>
+                ) : (
+                  <View style={styles.connector}>
+                    <View style={[styles.hArm, isFirst ? styles.hArmHidden : null]} />
+                    <View style={styles.vStub} />
+                    <View style={[styles.hArm, isLast ? styles.hArmHidden : null]} />
+                  </View>
+                )}
+
+                <View style={styles.nodeCol}>
+                  {spouse && !spouseHidden ? (
+                    <View style={styles.coupleBox}>
+                      <TreePersonCard
+                        person={spouse}
+                        role={role}
+                        showRing={bIdx === 0}
+                        showPlus={bIdx > 0}
+                        onPress={() => onPressPerson(spouse)}
+                      />
+                    </View>
+                  ) : !spouse ? (
+                    <Text style={styles.unknownSpouseLabel}>Chưa rõ vợ/chồng</Text>
+                  ) : null}
+
+                  {renderKids(branchChildren)}
                 </View>
-              );
-            })}
-          </View>
+              </View>
+            );
+          })}
         </View>
-      ) : null}
+      </View>
     </View>
   );
 }
@@ -629,6 +725,14 @@ const styles = StyleSheet.create({
   },
   kidsBlock: {
     alignItems: "center",
+  },
+  unknownSpouseLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: colors.textSoft,
+    fontStyle: "italic",
+    paddingVertical: 10,
+    paddingHorizontal: 6,
   },
   parentStem: {
     width: LINE_W,

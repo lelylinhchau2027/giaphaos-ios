@@ -10,8 +10,17 @@ import {
   View,
 } from "react-native";
 import { useFamilyData } from "../src/context/FamilyDataContext";
-import { getBuiltInSupabase } from "../src/services/settings";
+import {
+  getBuiltInSupabase,
+  loadNotificationTime,
+  saveNotificationTime,
+  type NotificationTimePref,
+} from "../src/services/settings";
 import { colors } from "../src/theme";
+
+function pad2(n: number) {
+  return String(n).padStart(2, "0");
+}
 
 export default function SettingsRoute() {
   const { config, saveConfig, syncNative, lastSync, persons, customEvents } =
@@ -23,11 +32,43 @@ export default function SettingsRoute() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
+  const [notifTime, setNotifTime] = useState<NotificationTimePref>({
+    hour: 21,
+    minute: 0,
+  });
+  const [notifSaving, setNotifSaving] = useState(false);
+
   useEffect(() => {
     setUrl(config.supabaseUrl);
     setAnon(config.supabaseAnonKey);
     setSiteName(config.siteName);
   }, [config]);
+
+  useEffect(() => {
+    loadNotificationTime().then(setNotifTime);
+  }, []);
+
+  const adjustHour = (delta: number) =>
+    setNotifTime((t) => ({ ...t, hour: (t.hour + delta + 24) % 24 }));
+  const adjustMinute = (delta: number) =>
+    setNotifTime((t) => ({ ...t, minute: (t.minute + delta + 60) % 60 }));
+
+  const saveNotifTime = async () => {
+    setNotifSaving(true);
+    try {
+      const saved = await saveNotificationTime(notifTime);
+      setNotifTime(saved);
+      await syncNative();
+      Alert.alert(
+        "Đã lưu",
+        `Thông báo hàng ngày sẽ nhắc lúc ${pad2(saved.hour)}:${pad2(saved.minute)}.`,
+      );
+    } catch (e) {
+      Alert.alert("Lỗi", e instanceof Error ? e.message : "Không lưu được");
+    } finally {
+      setNotifSaving(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -138,6 +179,68 @@ export default function SettingsRoute() {
           nhưng bấm nút này ngay sau khi đổi dữ liệu để widget cập nhật liền
           thay vì chờ WidgetKit tự refresh.
         </Text>
+
+        <View style={styles.notifDivider} />
+
+        <Text style={styles.syncTitle}>Giờ nhắc sự kiện sắp tới</Text>
+        <Text style={styles.syncTip}>
+          Nhắc mỗi ngày vào giờ này cho các sự kiện trong 7 ngày tới. Riêng
+          đúng ngày sự kiện diễn ra sẽ luôn nhắc lúc 6:00 sáng.
+        </Text>
+
+        <View style={styles.timePickerRow}>
+          <View style={styles.timeUnit}>
+            <Pressable
+              style={styles.timeBtn}
+              onPress={() => adjustHour(1)}
+              hitSlop={8}
+            >
+              <Text style={styles.timeBtnText}>＋</Text>
+            </Pressable>
+            <Text style={styles.timeValue}>{pad2(notifTime.hour)}</Text>
+            <Pressable
+              style={styles.timeBtn}
+              onPress={() => adjustHour(-1)}
+              hitSlop={8}
+            >
+              <Text style={styles.timeBtnText}>－</Text>
+            </Pressable>
+            <Text style={styles.timeUnitLabel}>Giờ</Text>
+          </View>
+
+          <Text style={styles.timeColon}>:</Text>
+
+          <View style={styles.timeUnit}>
+            <Pressable
+              style={styles.timeBtn}
+              onPress={() => adjustMinute(5)}
+              hitSlop={8}
+            >
+              <Text style={styles.timeBtnText}>＋</Text>
+            </Pressable>
+            <Text style={styles.timeValue}>{pad2(notifTime.minute)}</Text>
+            <Pressable
+              style={styles.timeBtn}
+              onPress={() => adjustMinute(-5)}
+              hitSlop={8}
+            >
+              <Text style={styles.timeBtnText}>－</Text>
+            </Pressable>
+            <Text style={styles.timeUnitLabel}>Phút</Text>
+          </View>
+
+          <Pressable
+            style={styles.btnSync}
+            onPress={saveNotifTime}
+            disabled={notifSaving}
+          >
+            {notifSaving ? (
+              <ActivityIndicator color={colors.amberDark} />
+            ) : (
+              <Text style={styles.btnSyncText}>Lưu giờ nhắc</Text>
+            )}
+          </Pressable>
+        </View>
       </View>
 
       <Text style={styles.migration}>
@@ -207,6 +310,45 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSoft,
     lineHeight: 16,
+  },
+  notifDivider: {
+    marginTop: 14,
+    marginBottom: 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  timePickerRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  timeUnit: { alignItems: "center" },
+  timeBtn: {
+    width: 32,
+    height: 28,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timeBtnText: { fontSize: 13, fontWeight: "800", color: colors.amberDark },
+  timeValue: {
+    marginVertical: 4,
+    fontSize: 20,
+    fontWeight: "800",
+    color: colors.text,
+    minWidth: 36,
+    textAlign: "center",
+  },
+  timeUnitLabel: { fontSize: 10, color: colors.textSoft, marginTop: 2 },
+  timeColon: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: colors.text,
+    marginTop: -14,
   },
   migration: {
     marginTop: 14,
