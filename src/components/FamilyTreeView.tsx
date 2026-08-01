@@ -53,6 +53,11 @@ const CHASE_STEP_MS = 550;
  * sự đang sáng mới mount Reanimated (useAnimatedStyle). Gọi hook này cho MỌI
  * line trong cây (kể cả khi tắt tính năng trưởng nam) từng gây treo/crash khi
  * cây có nhiều thành viên.
+ *
+ * Nền LUÔN đặc màu vàng (opacity 1) — line chỉ dày 2px nên nếu mờ đi dù chỉ
+ * một chút, trên nền sáng nó biến thành màu nhạt gần như xám, trông như đứt
+ * đoạn dù logic highlight vẫn đúng. "Đốm sáng chạy" được thể hiện bằng shadow
+ * (glow) phát sáng thêm quanh line, không làm giảm độ đặc của màu nền.
  */
 function AnimatedGoldLine({
   style,
@@ -64,12 +69,24 @@ function AnimatedGoldLine({
   chaseProgress: SharedValue<number> | null;
 }) {
   const animStyle = useAnimatedStyle(() => {
-    if (!chaseProgress) return { backgroundColor: GOLD, opacity: 1 };
+    if (!chaseProgress) return { shadowOpacity: 0 };
     const dist = Math.abs(chaseProgress.value - depth);
     const glow = Math.max(0, 1 - dist);
-    return { backgroundColor: GOLD, opacity: 0.35 + glow * 0.65 };
+    return { shadowOpacity: glow * 0.9, shadowRadius: 1 + glow * 4 };
   });
-  return <Animated.View style={[style, animStyle]} />;
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          backgroundColor: GOLD,
+          shadowColor: GOLD_GLOW,
+          shadowOffset: { width: 0, height: 0 },
+        },
+        animStyle,
+      ]}
+    />
+  );
 }
 
 /** Một đoạn line — vẽ tĩnh (màu xám, không tốn overhead animation) hoặc vàng nhấp nháy. */
@@ -88,21 +105,36 @@ function TreeLine({
   return <AnimatedGoldLine style={style} depth={depth} chaseProgress={chaseProgress} />;
 }
 
-/** Viền vàng nhấp nháy quanh thẻ — chỉ mount (và chỉ tốn Reanimated) khi thẻ đang sáng. */
+/**
+ * Viền vàng nhấp nháy — bao quanh CẢ KHỐI (coupleBox: trưởng nam + vợ/chồng,
+ * dù 1/2/3 người) thành MỘT viền chung duy nhất, thay vì mỗi thẻ tự vẽ viền
+ * riêng rồi chồng chéo lên nhau ở điểm giáp ranh giữa các thẻ.
+ *
+ * Viền (borderColor) LUÔN đặc màu vàng — chỉ độ sáng của shadow xung quanh
+ * nhấp nháy theo "đốm sáng chạy", không làm mờ viền như trước (mờ viền khiến
+ * thẻ trưởng nam trông như chưa được tô vàng).
+ */
 function GoldGlowRing({
   depth,
   chaseProgress,
+  style,
 }: {
   depth: number;
   chaseProgress: SharedValue<number> | null;
+  style?: object;
 }) {
   const glowStyle = useAnimatedStyle(() => {
-    if (!chaseProgress) return { opacity: 1 };
+    if (!chaseProgress) return { shadowOpacity: 0.5 };
     const dist = Math.abs(chaseProgress.value - depth);
     const glow = Math.max(0, 1 - dist);
-    return { opacity: 0.35 + glow * 0.65 };
+    return { shadowOpacity: 0.35 + glow * 0.45, shadowRadius: 5 + glow * 5 };
   });
-  return <Animated.View pointerEvents="none" style={[styles.goldGlowRing, glowStyle]} />;
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.goldGlowRing, style, glowStyle]}
+    />
+  );
 }
 
 /** Compact vertical card — mirrors web FamilyNodeCard */
@@ -112,8 +144,6 @@ function TreePersonCard({
   showRing,
   showPlus,
   onPress,
-  chaseDepth,
-  chaseProgress,
   showEldestLabel,
 }: {
   person: Person;
@@ -121,9 +151,6 @@ function TreePersonCard({
   showRing?: boolean;
   showPlus?: boolean;
   onPress: () => void;
-  /** Có mặt (>=0) khi thẻ này (hoặc vợ/chồng của trưởng nam) cần sáng viền. */
-  chaseDepth?: number;
-  chaseProgress?: SharedValue<number> | null;
   /** Chỉ true cho đúng người con trai — không hiện trên thẻ vợ/chồng của họ. */
   showEldestLabel?: boolean;
 }) {
@@ -132,7 +159,6 @@ function TreePersonCard({
     !person.is_deceased && person.birth_year
       ? new Date().getFullYear() - person.birth_year
       : null;
-  const highlighted = chaseDepth != null;
 
   return (
     <Pressable
@@ -142,10 +168,6 @@ function TreePersonCard({
         person.is_deceased && styles.cardDeceased,
       ]}
     >
-      {highlighted ? (
-        <GoldGlowRing depth={chaseDepth ?? 0} chaseProgress={chaseProgress ?? null} />
-      ) : null}
-
       {showRing ? (
         <View style={styles.badgeIcon}>
           <Text style={styles.badgeIconText}>💍</Text>
@@ -361,9 +383,6 @@ function TreeNode({
     chaseProgress,
   };
 
-  const spouseGlowDepth = (spouseId: string) =>
-    myEntry?.spouseId === spouseId ? myEntry.depth : undefined;
-
   /** Hàng con + line nối, không kèm stem phía trên (dùng khi cha đã tự vẽ stem riêng). */
   function renderKidsRow(kids: Person[]) {
     return (
@@ -435,26 +454,27 @@ function TreeNode({
   if (plan.mode === "single") {
     return (
       <View style={styles.nodeCol}>
-        <View style={styles.coupleBox}>
-          <TreePersonCard
-            person={person}
-            onPress={() => onPressPerson(person)}
-            chaseDepth={myEntry?.depth}
-            chaseProgress={chaseProgress}
-            showEldestLabel={isHighlighted}
-          />
-          {plan.spouses.map((s, idx) => (
+        <View style={styles.coupleBoxWrap}>
+          <View style={styles.coupleBox}>
             <TreePersonCard
-              key={s.id}
-              person={s}
-              role={s.gender === "male" ? "Chồng" : "Vợ"}
-              showRing={idx === 0}
-              showPlus={idx > 0}
-              onPress={() => onPressPerson(s)}
-              chaseDepth={spouseGlowDepth(s.id)}
-              chaseProgress={chaseProgress}
+              person={person}
+              onPress={() => onPressPerson(person)}
+              showEldestLabel={isHighlighted}
             />
-          ))}
+            {plan.spouses.map((s, idx) => (
+              <TreePersonCard
+                key={s.id}
+                person={s}
+                role={s.gender === "male" ? "Chồng" : "Vợ"}
+                showRing={idx === 0}
+                showPlus={idx > 0}
+                onPress={() => onPressPerson(s)}
+              />
+            ))}
+          </View>
+          {isHighlighted ? (
+            <GoldGlowRing depth={myEntry!.depth} chaseProgress={chaseProgress} />
+          ) : null}
         </View>
 
         {renderKids(plan.children)}
@@ -538,28 +558,29 @@ function TreeNode({
 
   return (
     <View style={[styles.nodeCol, { width: outerWidth }]}>
-      <View style={[styles.coupleBox, { width: coupleRowWidth }]}>
-        {rowItems.map((p) =>
-          p.id === person.id ? (
-            <TreePersonCard
-              key={p.id}
-              person={p}
-              onPress={() => onPressPerson(p)}
-              chaseDepth={myEntry?.depth}
-              chaseProgress={chaseProgress}
-              showEldestLabel={isHighlighted}
-            />
-          ) : (
-            <TreePersonCard
-              key={p.id}
-              person={p}
-              role={roleById.get(p.id)}
-              onPress={() => onPressPerson(p)}
-              chaseDepth={spouseGlowDepth(p.id)}
-              chaseProgress={chaseProgress}
-            />
-          ),
-        )}
+      <View style={[styles.coupleBoxWrap, { width: coupleRowWidth }]}>
+        <View style={[styles.coupleBox, { width: coupleRowWidth }]}>
+          {rowItems.map((p) =>
+            p.id === person.id ? (
+              <TreePersonCard
+                key={p.id}
+                person={p}
+                onPress={() => onPressPerson(p)}
+                showEldestLabel={isHighlighted}
+              />
+            ) : (
+              <TreePersonCard
+                key={p.id}
+                person={p}
+                role={roleById.get(p.id)}
+                onPress={() => onPressPerson(p)}
+              />
+            ),
+          )}
+        </View>
+        {isHighlighted ? (
+          <GoldGlowRing depth={myEntry!.depth} chaseProgress={chaseProgress} />
+        ) : null}
       </View>
 
       {renderBranches.length > 0 ? (
@@ -1064,6 +1085,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginHorizontal: 6,
   },
+  /** Bọc ngoài coupleBox — cho phép GoldGlowRing định vị absolute bao trọn
+   * CẢ khối (dù 1/2/3 thẻ) thành 1 viền chung duy nhất, thay vì mỗi thẻ 1 viền. */
+  coupleBoxWrap: {
+    position: "relative",
+  },
   coupleBox: {
     flexDirection: "row",
     flexWrap: "nowrap",
@@ -1168,32 +1194,38 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: GOLD,
     shadowColor: GOLD_GLOW,
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 6,
+    elevation: 4,
   },
+  /** Icon nổi ở khe giữa 2 thẻ trong cùng 1 coupleBox — KHÔNG có nền/viền
+   * riêng, để không tạo cảm giác "viền riêng cho từng người" chồng lên viền
+   * chung của cả khối (kể cả khi khối đang phát sáng vàng). */
   badgeIcon: {
     position: "absolute",
     top: 14,
     left: -8,
     width: 20,
     height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: "center",
     justifyContent: "center",
     zIndex: 2,
-    elevation: 2,
   },
-  badgeIconText: { fontSize: 10 },
+  badgeIconText: {
+    fontSize: 11,
+    textShadowColor: colors.white,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 3,
+  },
   badgeIconPlus: {
-    fontSize: 12,
-    fontWeight: "700",
+    fontSize: 13,
+    fontWeight: "800",
     color: colors.textMuted,
     marginTop: -1,
+    textShadowColor: colors.white,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 3,
   },
   avatarWrap: { width: 44, height: 44, marginBottom: 6 },
   avatar: {
