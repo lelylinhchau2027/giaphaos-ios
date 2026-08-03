@@ -21,13 +21,17 @@ import Animated, {
 } from "react-native-reanimated";
 import {
   computeEldestSonChain,
-  getChildren,
-  getChildrenGroupedBySpouses,
-  getSpouses,
   pickDefaultRootId,
-  type ChildrenBranch,
   type EldestSonChainEntry,
 } from "../domain/treeRoot";
+import {
+  CARD_W,
+  NODE_MARGIN,
+  computeNodeWidth,
+  measureKidsRow,
+  planLayout,
+  type LayoutFilters,
+} from "../domain/treeLayout";
 import type { Person, Relationship } from "../types";
 import { colors, genderBg, genderColor } from "../theme";
 import GenderBadge from "./GenderBadge";
@@ -41,7 +45,6 @@ type Props = {
 const LINE = colors.stone200;
 const LINE_W = 2;
 const STEM_H = 22;
-const CARD_W = 88;
 
 const GOLD = colors.amberMid;
 const GOLD_GLOW = colors.amberDark;
@@ -226,117 +229,6 @@ function TreePersonCard({
   );
 }
 
-const passesGenderFilter = (
-  g: Person["gender"],
-  hideMales: boolean,
-  hideFemales: boolean,
-) => !(hideMales && g === "male") && !(hideFemales && g === "female");
-
-type LayoutPlan =
-  | { mode: "single"; spouses: Person[]; children: Person[] }
-  | {
-      mode: "multi";
-      rawSpouses: Person[];
-      rowLeft: Person[];
-      rowRight: Person[];
-      branches: ChildrenBranch[];
-    };
-
-/**
- * Quyết định layout (1 khối gộp hay tách nhánh nhiều vợ/chồng) — dùng chung
- * bởi TreeNode để việc render nhất quán.
- */
-function planLayout(
-  person: Person,
-  personsMap: Map<string, Person>,
-  relationships: Relationship[],
-  hideSpouses: boolean,
-  hideMales: boolean,
-  hideFemales: boolean,
-): LayoutPlan {
-  const rawSpouses = hideSpouses
-    ? []
-    : getSpouses(person.id, relationships, personsMap);
-
-  if (rawSpouses.length <= 1) {
-    const spouses = rawSpouses.filter((s) =>
-      passesGenderFilter(s.gender, hideMales, hideFemales),
-    );
-    const children = getChildren(person.id, relationships, personsMap).filter((c) =>
-      passesGenderFilter(c.gender, hideMales, hideFemales),
-    );
-    return { mode: "single", spouses, children };
-  }
-
-  // Xen kẽ 2 bên: vợ/chồng thứ 1 → phải (gần), thứ 2 → trái (gần), thứ 3 → phải (xa)...
-  const rightSpouses: Person[] = [];
-  const leftSpousesEncountered: Person[] = [];
-  rawSpouses.forEach((s, i) => {
-    if (i % 2 === 0) rightSpouses.push(s);
-    else leftSpousesEncountered.push(s);
-  });
-  const rowLeft = [...leftSpousesEncountered].reverse();
-
-  const branches = getChildrenGroupedBySpouses(
-    person.id,
-    rawSpouses,
-    relationships,
-    personsMap,
-  ).map((b) => ({
-    spouse: b.spouse,
-    children: b.children.filter((c) => passesGenderFilter(c.gender, hideMales, hideFemales)),
-  }));
-
-  return { mode: "multi", rawSpouses, rowLeft, rowRight: rightSpouses, branches };
-}
-
-/** Mỗi node (nodeCol) có marginHorizontal:6 hai bên → 12px giữa 2 anh em cạnh nhau. */
-const NODE_MARGIN = 12;
-
-/**
- * Bề rộng (px) node này thực sự chiếm khi render — tính đệ quy bằng đúng các
- * hằng số layout (CARD_W, NODE_MARGIN) mà JSX bên dưới dùng, để suy ra chính
- * xác điểm giữa avatar cho nhánh nối nhiều vợ/chồng bằng công thức thuần túy
- * (không dùng onLayout/state — tránh vòng lặp re-render từng gây crash).
- */
-function computeNodeWidth(
-  person: Person,
-  personsMap: Map<string, Person>,
-  relationships: Relationship[],
-  hideSpouses: boolean,
-  hideMales: boolean,
-  hideFemales: boolean,
-  visited: Set<string>,
-): number {
-  if (visited.has(person.id)) return CARD_W;
-  const nextVisited = new Set(visited);
-  nextVisited.add(person.id);
-
-  const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
-
-  const widthOfKids = (kids: Person[]) =>
-    kids.reduce(
-      (sum, c) =>
-        sum +
-        computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
-        NODE_MARGIN,
-      0,
-    );
-
-  if (plan.mode === "single") {
-    if (plan.children.length === 0) return CARD_W;
-    return Math.max(CARD_W, widthOfKids(plan.children));
-  }
-
-  const coupleRowWidth = (plan.rawSpouses.length + 1) * CARD_W;
-  let branchesRowWidth = 0;
-  for (const b of plan.branches) {
-    if (b.children.length === 0) continue;
-    branchesRowWidth += widthOfKids(b.children) + NODE_MARGIN;
-  }
-  return Math.max(coupleRowWidth, branchesRowWidth);
-}
-
 type TreeNodeProps = {
   person: Person;
   personsMap: Map<string, Person>;
@@ -370,7 +262,8 @@ function TreeNode({
   const myEntry = highlightChain?.get(person.id);
   const isHighlighted = myEntry != null;
 
-  const plan = planLayout(person, personsMap, relationships, hideSpouses, hideMales, hideFemales);
+  const filters: LayoutFilters = { hideSpouses, hideMales, hideFemales };
+  const plan = planLayout(person, personsMap, relationships, filters);
 
   const commonChildProps = {
     personsMap,
@@ -385,6 +278,26 @@ function TreeNode({
 
   /** Hàng con + line nối, không kèm stem phía trên (dùng khi cha đã tự vẽ stem riêng). */
   function renderKidsRow(kids: Person[]) {
+    // Stem của cha rơi vào ĐÚNG TÂM cả hàng con, còn con trưởng thường nằm
+    // ngoài cùng bên trái → đoạn ngang giữa hai điểm đó đi xuyên qua cột của
+    // các em. Nếu chỉ tô vàng 2 cánh tay của riêng con trưởng (như trước) thì
+    // vệt vàng đứt ngay khi cha có từ 3 con trở lên. Vì vậy tính toạ độ thật
+    // của từng cột (bằng đúng hằng số layout, không dùng onLayout) rồi phủ MỘT
+    // thanh vàng liền mạch từ tâm hàng tới tâm cột con trưởng.
+    const { colCenters, rowCenter } = measureKidsRow(
+      kids,
+      personsMap,
+      relationships,
+      filters,
+      nextVisited,
+    );
+
+    const goldIdx = isHighlighted ? kids.findIndex((c) => highlightChain?.has(c.id)) : -1;
+    const goldEntry = goldIdx >= 0 ? highlightChain!.get(kids[goldIdx].id)! : null;
+    const goldLeft = goldIdx >= 0 ? Math.min(rowCenter, colCenters[goldIdx]) : 0;
+    const goldWidth =
+      goldIdx >= 0 ? Math.abs(colCenters[goldIdx] - rowCenter) + LINE_W : 0;
+
     return (
       <View style={styles.kidsRow}>
         {kids.map((child, index) => {
@@ -407,41 +320,46 @@ function TreeNode({
                 </View>
               ) : (
                 <View style={styles.connector}>
-                  <TreeLine
-                    style={[styles.hArm, isFirst ? styles.hArmHidden : null]}
-                    highlighted={childHighlighted && !isFirst}
-                    depth={childDepth}
-                    chaseProgress={chaseProgress}
-                  />
+                  {/* Cánh tay ngang luôn vẽ xám — phần vàng do goldTrail bên
+                      dưới phủ lên nguyên một dải, tránh đứt đoạn/thừa đuôi. */}
+                  <View style={[styles.hArm, isFirst ? styles.hArmHidden : null]} />
                   <TreeLine
                     style={styles.vStub}
                     highlighted={childHighlighted}
                     depth={childDepth}
                     chaseProgress={chaseProgress}
                   />
-                  <TreeLine
-                    style={[styles.hArm, isLast ? styles.hArmHidden : null]}
-                    highlighted={childHighlighted && !isLast}
-                    depth={childDepth}
-                    chaseProgress={chaseProgress}
-                  />
+                  <View style={[styles.hArm, isLast ? styles.hArmHidden : null]} />
                 </View>
               )}
               <TreeNode person={child} visited={nextVisited} {...commonChildProps} />
             </View>
           );
         })}
+
+        {goldEntry && goldWidth > LINE_W ? (
+          <View style={styles.goldTrailLayer} pointerEvents="none">
+            <AnimatedGoldLine
+              style={[styles.goldTrail, { left: goldLeft - LINE_W / 2, width: goldWidth }]}
+              depth={goldEntry.depth}
+              chaseProgress={chaseProgress}
+            />
+          </View>
+        ) : null}
       </View>
     );
   }
 
   function renderKids(kids: Person[]) {
     if (kids.length === 0) return null;
+    // Stem chỉ vàng khi chuỗi trưởng nam thực sự đi tiếp xuống hàng con này —
+    // người cuối chuỗi không được thò một đoạn vàng cụt xuống đám con gái.
+    const continuesChain = isHighlighted && kids.some((c) => highlightChain?.has(c.id));
     return (
       <View style={styles.kidsBlock}>
         <TreeLine
           style={styles.parentStem}
-          highlighted={isHighlighted}
+          highlighted={continuesChain}
           depth={myEntry?.depth ?? 0}
           chaseProgress={chaseProgress}
         />
@@ -531,15 +449,14 @@ function TreeNode({
     });
   }
 
-  const branchWidths = renderBranches.map(
-    (b) =>
-      b.children.reduce(
-        (sum, c) =>
-          sum +
-          computeNodeWidth(c, personsMap, relationships, hideSpouses, hideMales, hideFemales, nextVisited) +
-          NODE_MARGIN,
-        0,
-      ),
+  const branchWidths = renderBranches.map((b) =>
+    b.children.reduce(
+      (sum, c) =>
+        sum +
+        computeNodeWidth(c, personsMap, relationships, filters, nextVisited) +
+        NODE_MARGIN,
+      0,
+    ),
   );
   const branchesRowWidth = branchWidths.reduce((a, w) => a + w + NODE_MARGIN, 0);
   const outerWidth = Math.max(coupleRowWidth, branchesRowWidth);
@@ -1144,6 +1061,20 @@ const styles = StyleSheet.create({
     width: "100%",
     height: STEM_H,
     alignItems: "center",
+  },
+  /** Lớp phủ nằm trên các cánh tay xám, dùng để vẽ dải vàng liền mạch từ tâm
+   * hàng (chỗ stem của cha đáp xuống) sang tâm cột của con trưởng. */
+  goldTrailLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  goldTrail: {
+    position: "absolute",
+    top: 0,
+    height: LINE_W,
   },
 
   /* —— nhiều vợ/chồng: chồng giữa, vợ 2 bên, mỗi hôn nhân 1 nhánh nối riêng.
